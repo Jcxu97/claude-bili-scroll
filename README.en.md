@@ -18,7 +18,7 @@ Claude Code · Codex · any agent that supports MCP
 
 1. A daily Markdown report. Each pick has the title, the uploader, the view count, the reason to watch, and a one-line comment.
 2. One comment under the best video that mentions your main account. You see it in your Bilibili notifications.
-3. Answers to your questions. Mention the bot under a video. It reads the subtitles and replies in the thread.
+3. Answers to your questions. Mention the bot under a video. It reads the subtitles, the danmaku, and the comments, and replies in the thread. If the video has no subtitles, or you ask about the picture, it looks at a set of frames first.
 4. A polite brush-off for other people. The bot replies only to you.
 
 ## How it picks videos

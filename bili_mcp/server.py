@@ -18,6 +18,7 @@ B站数据采集 MCP 服务，支持 OpenClaw / Claude Code / Cursor / Cline
 #      ⑥ 凭证路径可以用环境变量 BILI_CREDENTIAL_FILE 指定
 #      ⑦ `bili_search` 返回 pubdate，并支持 days 参数（只搜近 N 天）
 #      ⑧ `bili_weekly_hot` 带登录凭证请求（不带会被风控 -352），返回内容精简成几个字段
+#      ⑨ 新增 `bili_frames`：用进度条预览图切出带时间点的截图，给能看图的 agent 看画面
 import asyncio
 import json
 import base64
@@ -475,6 +476,61 @@ async def bili_danmaku(bvid: str, num: int = 100) -> str:
         })
 
     return json.dumps({"bvid": bvid, "count": len(result), "danmakus": result}, ensure_ascii=False)
+
+
+# ========== Tool: 视频截图（claude-bili-scroll 加的） ==========
+
+@tool()
+async def bili_frames(bvid: str, count: int = 12) -> str:
+    """
+    取视频的一组截图（带时间点），存成图片文件，返回文件路径。用看图工具打开这些文件就能看到画面。
+    适合没有字幕、没有人声，或者问题跟画面有关的视频。
+
+    Args:
+        bvid: 视频BV号
+        count: 要几张，在全片里均匀取，默认12，最多30
+
+    Returns:
+        每张截图的时间点和本地文件路径
+    """
+    # Uses the seek-bar preview sprites (videoshot API), so no video download is needed.
+    import io
+    import urllib.request
+    from PIL import Image
+    cred = get_cred()
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0 Safari/537.36",
+               "Referer": "https://www.bilibili.com/",
+               "Cookie": f"SESSDATA={cred.sessdata}; buvid3={cred.buvid3}"}
+
+    def get(url):
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=20) as r:
+            return r.read()
+
+    try:
+        d = json.loads(get(f"https://api.bilibili.com/x/player/videoshot?bvid={bvid}&index=1"))["data"]
+    except Exception as e:
+        return json.dumps({"error": f"拿不到截图：{e}"}, ensure_ascii=False)
+    times = [int(t) for t in (d.get("index") or [])]
+    if not d.get("image") or not times:
+        return json.dumps({"error": "这个视频没有预览截图"}, ensure_ascii=False)
+    nx, ny, w, h = d["img_x_len"], d["img_y_len"], d["img_x_size"], d["img_y_size"]
+    count = max(1, min(count, 30, len(times)))
+    picks = sorted({round(i * (len(times) - 1) / max(count - 1, 1)) for i in range(count)})
+    out_dir = Path(os.environ.get("BILI_FRAMES_DIR") or tempfile.gettempdir()) / "frames" / bvid
+    out_dir.mkdir(parents=True, exist_ok=True)
+    sheets, frames = {}, []
+    for i in picks:
+        sheet_no, cell = divmod(i, nx * ny)
+        if sheet_no >= len(d["image"]):
+            break
+        if sheet_no not in sheets:
+            sheets[sheet_no] = Image.open(io.BytesIO(get("https:" + d["image"][sheet_no]))).convert("RGB")
+        x, y = (cell % nx) * w, (cell // nx) * h
+        t = times[i]
+        path = out_dir / f"{t // 60:02d}m{t % 60:02d}s.jpg"
+        sheets[sheet_no].crop((x, y, x + w, y + h)).save(path, quality=90)
+        frames.append({"time": f"{t // 60}:{t % 60:02d}", "path": str(path)})
+    return json.dumps({"bvid": bvid, "count": len(frames), "frames": frames}, ensure_ascii=False)
 
 
 # ========== Tool 5: 视频详情 ==========

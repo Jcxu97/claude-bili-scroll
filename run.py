@@ -37,7 +37,7 @@ DEFAULTS = {
     "paths": {"data": "data"},
 }
 SCROLL_TOOLS = ["bili_search", "bili_weekly_hot", "bili_subtitle", "bili_comments", "bili_video_info", "bili_check_credential"]
-INBOX_TOOLS = ["bili_subtitle", "bili_danmaku", "bili_comments", "bili_video_info", "bili_check_credential"]
+INBOX_TOOLS = ["bili_subtitle", "bili_danmaku", "bili_frames", "bili_comments", "bili_video_info", "bili_check_credential"]
 CLAUDE_FILE_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep"]
 
 
@@ -107,10 +107,10 @@ def build_prompt(cfg, task, dry_run, messages=None):
     return "\n\n".join(parts) + "\n", tools
 
 
-def mcp_server_spec(cfg, tools):
+def mcp_server_spec(cfg, tools, workspace):
     return {"command": sys.executable, "args": ["-I", str(SERVER)],
             "env": {"BILI_MCP_TOOLS": ",".join(tools), "BILI_CREDENTIAL_FILE": str(cred_file(cfg)),
-                    "PYTHONIOENCODING": "utf-8"}}
+                    "BILI_FRAMES_DIR": str(workspace), "PYTHONIOENCODING": "utf-8"}}
 
 
 def agent_command(cfg, workspace, mcp_json, prompt_file, tools):
@@ -125,7 +125,7 @@ def agent_command(cfg, workspace, mcp_json, prompt_file, tools):
         cmd += ["--effort", effort] if effort else []
         return cmd
     if name == "codex":
-        spec = mcp_server_spec(cfg, tools)
+        spec = mcp_server_spec(cfg, tools, workspace)
         env = "{" + ",".join(f"{k}={json.dumps(v)}" for k, v in spec["env"].items()) + "}"
         cmd = ["codex", "exec", "--skip-git-repo-check", "-s", "workspace-write", "-C", str(workspace),
                "-c", f"mcp_servers.bili.command={json.dumps(spec['command'])}",
@@ -150,7 +150,7 @@ def run_agent(cfg, workspace, task, dry_run, messages=None):
     prompt_file = workspace / f".prompt-{task}.md"
     prompt_file.write_text(prompt, encoding="utf-8")
     mcp_json = workspace / ".mcp.json"
-    mcp_json.write_text(json.dumps({"mcpServers": {"bili": mcp_server_spec(cfg, tools)}}, indent=2), encoding="utf-8")
+    mcp_json.write_text(json.dumps({"mcpServers": {"bili": mcp_server_spec(cfg, tools, workspace)}}, indent=2), encoding="utf-8")
     cmd = agent_command(cfg, workspace, mcp_json, prompt_file, tools)
     exe = shutil.which(cmd[0])
     if not exe:
