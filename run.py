@@ -403,6 +403,9 @@ def cmd_schedule(cfg, args):
 
 
 def main(argv=None):
+    # A Windows console with a non-UTF-8 code page cannot print Chinese and would crash the run.
+    for stream in (sys.stdout, sys.stderr):
+        stream.reconfigure(errors="replace")
     ap = argparse.ArgumentParser(prog="run.py", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", default=str(ROOT / "config.toml"), help="配置文件，默认是仓库里的 config.toml")
     ap.add_argument("--data", help="临时换一个数据目录（凭证仍从配置里的目录读），试运行时用")

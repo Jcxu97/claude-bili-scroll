@@ -65,7 +65,7 @@ Set `[agent]` in `config.toml`.
 | Agent | Settings | Status |
 |---|---|---|
 | Claude Code | `name = "claude"`, `model = "opus"`, `effort = "medium"` | Tested |
-| Codex CLI | `name = "codex"`, `model = "gpt-5.5"`, `effort = "medium"` | Tested |
+| Codex CLI | `name = "codex"`, `model` set to a model your account can use, `effort = "medium"` | Tested |
 | Other | `name = "custom"` and a `custom_command` template | Works if the agent supports MCP and reads the prompt from stdin |
 
 ## Personas and comment style
