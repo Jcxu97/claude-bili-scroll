@@ -1,0 +1,50 @@
+# 复制成 config.toml 再改。没写的项用这里的默认值。
+
+[agent]
+# claude = Claude Code，codex = OpenAI Codex CLI，custom = 别的 agent（见下面 custom_command）
+name = "claude"
+# 留空就用这个 agent 自己的默认模型。Claude Code 可以写 opus / sonnet，Codex 可以写 gpt-5.5 这类型号
+model = "opus"
+# 思考强度。Claude Code 和 Codex 都支持 low / medium / high
+effort = "medium"
+# 只有 name = "custom" 时才用。提示词从标准输入传进去。可用的占位符：
+#   {mcp_config}  生成好的 MCP 配置文件路径（Claude Desktop / Cursor 通用的 mcpServers 格式）
+#   {prompt_file} 写好提示词的文件路径（agent 不支持标准输入时用它）
+#   {workspace}   数据目录
+# custom_command = ["my-agent", "--mcp-config", "{mcp_config}", "--cwd", "{workspace}"]
+
+[scroll]
+# 每天最多挑几条
+max_picks = 5
+# 只看播放量不低于这个数的视频
+min_play = 100000
+# 只看近多少天发布的
+days = 30
+# 要不要把 B 站官方"每周必看"当作候选来源
+weekly_hot = true
+# 搜索关键词，题材不限
+keywords = ["AI工具", "编程", "数码评测", "知识科普", "生活技巧", "纪录片"]
+
+[comment]
+# 挑完之后，要不要在最值得的那条视频下面发评论 @ 你的主号
+enabled = false
+# 主号的 B 站昵称（评论里 @ 的就是它）
+at = ""
+# 每轮最多发几条
+max_per_run = 1
+
+[inbox]
+# 要不要处理小号收到的 @ 和回复
+enabled = false
+# 主号的 UID（在 B 站个人空间网址里，space.bilibili.com/后面那串数字）。按 UID 认人，不按昵称
+owner_uid = 0
+# 每天最多回几个陌生人（每人每天最多 1 次）
+max_stranger_replies_per_day = 10
+
+[persona]
+# 人设文件。personas/ 下自带 neutral.md（中性）和 ojousama.md（Claude 大小姐）
+file = "personas/neutral.md"
+
+[paths]
+# 日报、判重表、凭证、日志都放在这里
+data = "data"

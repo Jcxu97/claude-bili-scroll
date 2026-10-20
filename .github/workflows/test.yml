@@ -1,0 +1,41 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.11", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -v
+      - name: MCP server starts and lists only whitelisted tools
+        shell: bash
+        env:
+          BILI_MCP_TOOLS: bili_search,bili_subtitle
+        run: |
+          python - <<'EOF'
+          import asyncio, os, sys
+          from mcp import ClientSession, StdioServerParameters
+          from mcp.client.stdio import stdio_client
+          async def main():
+              p = StdioServerParameters(command=sys.executable, args=["bili_mcp/server.py"], env=dict(os.environ))
+              async with stdio_client(p) as (r, w):
+                  async with ClientSession(r, w) as s:
+                      await s.initialize()
+                      names = sorted(t.name for t in (await s.list_tools()).tools)
+                      print(names)
+                      assert names == ["bili_search", "bili_subtitle"], names
+          asyncio.run(main())
+          EOF
+      - run: python run.py --help

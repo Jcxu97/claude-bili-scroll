@@ -1,0 +1,5 @@
+bilibili-api-python>=17.4.1,<18
+aiohttp>=3.9.0
+# mcp 2.x 的 server 没有 list_tools，起不来，必须锁 <2
+mcp>=1.0.0,<2
+qrcode[pil]>=8.0
