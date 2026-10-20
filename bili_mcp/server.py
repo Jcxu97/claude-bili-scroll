@@ -19,6 +19,8 @@ B站数据采集 MCP 服务，支持 OpenClaw / Claude Code / Cursor / Cline
 #      ⑦ `bili_search` 返回 pubdate，并支持 days 参数（只搜近 N 天）
 #      ⑧ `bili_weekly_hot` 带登录凭证请求（不带会被风控 -352），返回内容精简成几个字段
 #      ⑨ 新增 `bili_frames`：用进度条预览图切出带时间点的截图，给能看图的 agent 看画面
+#      ⑩ `bili_send_message` 认环境变量 BILI_DM_TO：给了这个变量，就只能发给名单里的 UID。
+#         再给了 BILI_DM_OWNER（主号 UID），发给别人的私信每人只能一条，40 字以内
 import asyncio
 import json
 import base64
@@ -1398,6 +1400,9 @@ async def bili_favorite_content(media_id: int, page: int = 1, keyword: str = "")
 
 # ========== Tool 21: 发私信 ==========
 
+_DM_SENT = set()  # 这个进程里已经回过私信的 UID，主号以外的人每人只回一条
+
+
 @tool()
 async def bili_send_message(receiver_uid: int, text: str) -> str:
     """
@@ -1410,6 +1415,11 @@ async def bili_send_message(receiver_uid: int, text: str) -> str:
     Returns:
         发送结果
     """
+    if "BILI_DM_TO" in os.environ and str(receiver_uid) not in os.environ["BILI_DM_TO"].split(","):
+        return json.dumps({"success": False, "error": "这一轮只能回给发来私信的人"}, ensure_ascii=False)
+    if os.environ.get("BILI_DM_OWNER", str(receiver_uid)) != str(receiver_uid) and (
+            len(text or "") > 40 or receiver_uid in _DM_SENT):
+        return json.dumps({"success": False, "error": "给主号以外的人只能回一条，40 字以内"}, ensure_ascii=False)
     cred = get_cred()
 
     if not text or not text.strip():
@@ -1422,6 +1432,7 @@ async def bili_send_message(receiver_uid: int, text: str) -> str:
             msg_type=session.EventType.TEXT,
             content=text.strip(),
         )
+        _DM_SENT.add(receiver_uid)
         return json.dumps({
             "success": True,
             "message": f"私信已发送给UID:{receiver_uid}",

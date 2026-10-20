@@ -1,4 +1,6 @@
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -50,8 +52,28 @@ class AgentCommandTest(unittest.TestCase):
 class InboxTest(unittest.TestCase):
     def test_parse_notice(self):
         m = run.parse_notice(notice(123, 7))
-        self.assertEqual((m["rpid"], m["root"], m["bvid"], m["mid"]), (123, 123, "BV1xx411c7mD", 7))
+        self.assertEqual((m["id"], m["channel"], m["rpid"], m["root"], m["bvid"], m["mid"]),
+                         (123, "comment", 123, 123, "BV1xx411c7mD", 7))
         self.assertIsNone(run.parse_notice({"item": {"business_id": 11, "source_id": 1}}))
+
+    def test_parse_dm_skips_own_auto_and_system_messages(self):
+        me, owner = 1, 100
+
+        def dm(sender, body, t=2000, mtype=1, source=2):
+            return {"sender_uid": sender, "msg_type": mtype, "msg_source": source, "timestamp": t, "msg_key": 9,
+                    "content": json.dumps(body, ensure_ascii=False)}
+        m = run.parse_dm(dm(owner, {"content": "这个怎么样 https://www.bilibili.com/video/BV1xx411c7mD?p=1"}), me)
+        self.assertEqual((m["id"], m["channel"], m["bvid"], m["mid"]), ("dm9", "dm", "BV1xx411c7mD", owner))
+        shared = run.parse_dm(dm(owner, {"author": "up", "id": 170001, "source": 5, "title": "视频"}, mtype=7), me)
+        self.assertEqual((shared["bvid"], shared["title"]), ("BV17x411w7KC", "视频"))
+        self.assertEqual(run.parse_dm(dm(owner, {"content": "看看av170001"}), me)["bvid"], "BV17x411w7KC")
+        # A 50-digit av number once crashed aid2bvid on every round. An article card is not a video.
+        self.assertEqual(run.parse_dm(dm(5, {"content": "av" + "9" * 50}), me)["bvid"], "")
+        self.assertEqual(run.parse_dm(dm(owner, {"id": 170001, "source": 6, "title": "专栏"}, mtype=7), me)["bvid"], "")
+        self.assertIsNone(run.parse_dm(dm(me, {"content": "d"}), me))
+        self.assertIsNone(run.parse_dm(dm(owner, {"content": "加群"}, source=9), me))
+        self.assertIsNone(run.parse_dm(dm(owner, {"content": "加群"}, t=2002), me, bot_times=[2000]))
+        self.assertIsNone(run.parse_dm(dm(844424930131964, {"content": "通知"}, source=6), me))
 
     def test_owner_always_strangers_limited(self):
         owner, me = 100, 1
@@ -62,6 +84,19 @@ class InboxTest(unittest.TestCase):
         self.assertEqual([(m["rpid"], m["kind"]) for m in todo], [(1, "owner"), (2, "owner"), (3, "stranger")])
         again = run.select_messages(msgs, state, me, owner, stranger_limit=1, today="2026-01-01", since=1000)
         self.assertEqual(again, [])
+
+
+class ServeTest(unittest.TestCase):
+    def test_single_instance(self):
+        with tempfile.TemporaryDirectory() as d:
+            lock = Path(d) / "serve.lock"
+            first = run.single_instance(lock)
+            self.assertIsNotNone(first)
+            self.assertIsNone(run.single_instance(lock))
+            first.close()
+            again = run.single_instance(lock)
+            self.assertIsNotNone(again)
+            again.close()
 
 
 class VerifyTest(unittest.TestCase):

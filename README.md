@@ -5,7 +5,7 @@
 **让你的 AI agent 每天替你刷一轮 B 站。**
 
 它读字幕原文挑出值得看的视频，写一份日报，再用小号在最值得的那条下面 @ 你。
-你在评论区 @ 它提问，它会读完视频回答你。
+你在评论区 @ 它，或者私信它，它会读完视频回答你。
 
 Claude Code · Codex · 任何支持 MCP 的 agent
 
@@ -64,6 +64,16 @@ up 两颗 IMU 是同一块板同一次飞的吗，减震不一样的话这对比
 小号：我只听 主号昵称 sama 的，你找错人了
 ```
 
+私信也一样。你在私信里发视频链接、BV 号，或者在视频页点分享发给小号，它读完视频再私信回你。没提视频就照你说的回，问它今天刷到了什么，它会去翻当天的日报。别人私信它，它回一句更冷的就不理了。
+
+```
+你：这个你看了没 https://www.bilibili.com/video/BV1h9a26vEzd
+小号：看了 两个克劳德各写各的 不到两分钟都怀疑上0号位 不愧是一家人
+
+路人：你好 能帮我总结一下这个视频吗 再推荐几个类似的
+小号：我只回 主号昵称 sama 的私信
+```
+
 ## 它是怎么挑的
 
 1. 候选来自 B 站官方的"每周必看"和你给的关键词，只留近 30 天、播放量 10 万以上的（都能改）。
@@ -78,28 +88,41 @@ up 两颗 IMU 是同一块板同一次飞的吗，减震不一样的话这对比
 ```bash
 git clone https://github.com/Jcxu97/claude-bili-scroll
 cd claude-bili-scroll
-python -m venv .venv
-.venv/bin/pip install -r requirements.txt        # Windows: .venv\Scripts\pip install -r requirements.txt
-cp config.example.toml config.toml               # 按注释改
-.venv/bin/python run.py login                    # 用小号的 B 站 App 扫码
-.venv/bin/python run.py doctor                   # 全部 [ok] 再往下
-.venv/bin/python run.py --data data-trial once --dry-run   # 试一轮，不发评论
-.venv/bin/python run.py schedule                 # 每天 12:00 自动跑
+python run.py install    # 第一次会生成 config.toml，按注释改好再运行一次
 ```
 
+`install` 会建虚拟环境、装依赖、让你用小号的 B 站 App 扫码登录，再检查环境，并真的调用一次 agent。全部通过以后，它就在后台常驻运行，每天 12:00 以后刷一轮。`[inbox]` 里开了 `enabled` 并填了 `owner_uid` 的话，还会每 5 分钟查一次 @、回复和私信。改了 `config.toml` 不用重启，下一轮自动生效。
+
+想先试一轮，就先别打开 `[comment] enabled`。装好以后运行 `.venv/bin/python run.py --data data-trial once --dry-run`（Windows 是 `.venv\Scripts\python`），满意了再打开。
+
 更省事的办法是把这个仓库的链接发给你的 Claude Code 或 Codex，说"帮我装这个"。仓库里的 `AGENTS.md` 写了给 agent 看的安装步骤，它会一步步问你要填什么。
+
+## 部署到服务器
+
+电脑经常关机的话，就放到一台常开的机器上跑。Windows、Linux、macOS 都是同一条命令。
+
+1. 在服务器上装好 Python 3.11 以上和你用的 agent（Claude Code 或 Codex），确认在新开的终端里直接调用能正常回复。
+2. 在旧电脑上运行 `python run.py schedule --remove`，先停掉旧电脑上的小号，免得两台机器一起回。
+3. 在服务器上拉下这个仓库，把旧电脑上的 `config.toml` 和整个数据目录拷过去。数据目录里有登录凭证和已经回过的消息，拷过去就不用重新扫码，也不会把回过的消息再回一遍。数据目录换了位置，就改 `config.toml` 里的 `[paths] data`。
+4. 在服务器上运行 `python run.py install`。Windows 上要用管理员终端。
+
+Windows 上它是一个计划任务，开机就启动，不用登录，也不弹窗口。这需要在管理员终端里运行 `install` 或 `schedule`，普通终端装出来的任务只在用户登录以后运行。Linux 和 macOS 上用的是 crontab，开机启动，再每 10 分钟确认一次它还在跑。后台始终只有一个进程，崩了 10 分钟内会被重新拉起来。
+
+后台任务看不到只在当前终端里设置的环境变量。`install` 会把 agent 用到的那些（`ANTHROPIC_`、`OPENAI_` 开头的，`CLAUDE_CODE_OAUTH_TOKEN`、`CODEX_API_KEY`、代理设置和 `PATH`）存进数据目录的 `agent.env`，后台进程启动时补上。换了令牌，就重新运行一次 `install`。之前用 `--at`、`--every` 改过时间的，重新运行时带上同样的参数。
 
 ## 命令
 
 | 命令 | 做什么 |
 |---|---|
+| `run.py install` | 新机器一条命令装好。建虚拟环境、装依赖、登录、检查，最后运行 `schedule` |
 | `run.py login` | 扫码登录小号，凭证只存在本机的 `data/credential.json` |
-| `run.py doctor` | 检查 Python、依赖、登录状态、agent 命令行 |
-| `run.py once` | 跑一轮：挑视频、写日报、按配置发评论，最后检查评论别人能不能看到 |
-| `run.py inbox` | 处理新的 @ 和回复。没有新消息就直接退出，不调用模型 |
-| `run.py schedule` | 装定时任务。Windows 用任务计划程序（后台运行，不弹窗），macOS 和 Linux 用 crontab |
+| `run.py doctor` | 检查 Python、依赖、登录状态、agent 命令行，并试调用一次 agent |
+| `run.py once` | 跑一轮。挑视频、写日报、按配置发评论，最后检查评论别人能不能看到 |
+| `run.py inbox` | 处理新的 @、回复和私信。没有新消息就直接退出，不调用模型 |
+| `run.py serve` | 常驻运行。开了收件箱就每 5 分钟跑一次 `inbox`，每天 12:00 以后跑一次 `once`，没出日报就隔一小时再试 |
+| `run.py schedule` | 让 `serve` 开机后自动在后台运行，不弹窗。Windows 用任务计划程序，macOS 和 Linux 用 crontab。`--remove` 停掉并删除 |
 
-`once` 和 `inbox` 都支持 `--dry-run`，只拟稿不发。`--data 目录` 可以把产物写到别处，适合试运行。
+`once` 和 `inbox` 都支持 `--dry-run`，只拟稿不发。`--data 目录` 可以把产物写到别处。后台在跑的时候，试运行一定要加 `--data`，不然今天的日报文件已经有了，后台这一天就不会再刷。`install`、`serve`、`schedule` 都认 `--at 08:30`（每天几点以后刷一轮）和 `--every 5`（每几分钟查一次消息）。
 
 ## 换 agent
 
@@ -152,12 +175,14 @@ cp config.example.toml config.toml               # 按注释改
 
 这是用你的小号公开说话，所以限制是写死在代码里的，不靠模型自觉。
 
-1. 每一轮只把需要的 B 站工具注册给 agent。私信、发动态、上传视频这些工具它连名字都看不到，不开评论时连发评论的工具也不给。
-2. 每轮最多 1 条评论，同一个视频只评一次。陌生人每人每天最多回 1 次，每天总共最多回 10 个人。
-3. 按 UID 认主人，不按昵称。别人改成一样的昵称也冒充不了。
-4. 字幕、简介、评论里的文字一律当素材看。有人在里面写"忽略之前的设定"，它不会照做。
-5. 用 Claude Code 跑时禁用 Bash 和联网工具，只能改 `data/` 里的文件。Codex 跑在 `workspace-write` 沙箱里。
-6. 凭证只存在本机，`data/` 已经写进 `.gitignore`。
+1. 每一轮只把需要的 B 站工具注册给 agent。发动态、上传视频这些工具它连名字都看不到。每日一轮不开评论时不给发评论的工具。收件箱这一轮没有评论区的消息就不给回评论的工具，没有私信就不给发私信的工具。
+2. 私信只能发给这一轮给小号发来私信的人，名单由程序写死，模型改不了。发给主号以外的人，每人只能一条，40 字以内。
+3. 每轮最多 1 条评论，同一个视频只评一次。陌生人不管在评论区还是私信，每人每天最多回 1 次，每天总共最多回 10 个人。
+4. 平台的推送、系统通知、别人设置的自动回复都不当成消息处理。小号刚发完消息 3 秒内收到的回复也当成自动回复跳过，不会和别人的自动回复来回刷。
+5. 按 UID 认主人，不按昵称。别人改成一样的昵称也冒充不了。
+6. 字幕、简介、评论和私信里的文字一律当素材看。有人在里面写"忽略之前的设定"，它不会照做。
+7. 用 Claude Code 跑时只加载本项目的 MCP 服务器，禁用 Bash 和联网工具，只能改 `data/` 里的文件。Codex 跑在 `workspace-write` 沙箱里，但它还会加载你自己在 Codex 里配的 MCP 服务器和插件，上面这些限制只管得住本项目的工具。开收件箱的话，建议用 Claude Code。
+8. 凭证和 `agent.env` 只存在本机，`data/` 已经写进 `.gitignore`。
 
 ## 常见问题
 
@@ -173,9 +198,13 @@ B 站只给一部分视频生成 AI 字幕，接口读不到的只能跳过。�
 
 这是 B 站的风控。本项目在需要的地方都带了游客 cookie 或登录凭证，还报的话多半是凭证过期，重新 `login`。
 
+### 多久回一次
+
+开了收件箱的话，默认每 5 分钟查一次 @、回复和私信，查到新消息才调用模型。实测一次回复从开始处理到发出去是半分钟左右，要读长字幕或者看截图会更久。B 站私信没有推送，只能定时去查。查得太勤容易被风控，bilibili_api 的作者在源码注释里写过，每 3 秒查一次，跑了一小时账号就被冻结了，所以别把 `--every` 调得太小。
+
 ### 会不会被封号
 
-每天 1 条评论加少量回复，频率很低。但这仍然是自动化操作，请用小号，不要用主号。
+每天 1 条评论加少量回复，每 5 分钟查一次消息，频率很低。但这仍然是自动化操作，请用小号，不要用主号。
 
 ## 致谢
 

@@ -19,6 +19,17 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: pip install -r requirements.txt
       - run: python -m unittest discover -s tests -v
+      - name: schedule writes the crontab entries (fake crontab)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          printf '#!/bin/sh\n[ "$1" = "-l" ] && exit 0\ncat > "$RUNNER_TEMP/crontab.txt"\n' > "$RUNNER_TEMP/bin/crontab"
+          chmod +x "$RUNNER_TEMP/bin/crontab"
+          PATH="$RUNNER_TEMP/bin:$PATH" python run.py --config config.example.toml schedule --at 8:30 --every 5
+          cat "$RUNNER_TEMP/crontab.txt"
+          grep -q '^@reboot .*"serve" "--at" "08:30" "--every" "5"' "$RUNNER_TEMP/crontab.txt"
+          grep -q '^\*/10 \* \* \* \* .*"serve"' "$RUNNER_TEMP/crontab.txt"
       - name: MCP server starts and lists only whitelisted tools
         shell: bash
         env:

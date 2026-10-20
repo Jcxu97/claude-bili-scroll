@@ -34,7 +34,7 @@ at = ""
 max_per_run = 1
 
 [inbox]
-# 要不要处理小号收到的 @ 和回复
+# 要不要处理小号收到的 @、回复和私信
 enabled = false
 # 主号的 UID（在 B 站个人空间网址里，space.bilibili.com/后面那串数字）。按 UID 认人，不按昵称
 owner_uid = 0
