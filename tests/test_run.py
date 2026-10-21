@@ -13,6 +13,10 @@ import life  # noqa: E402
 import run  # noqa: E402
 import web  # noqa: E402
 
+# Match main(). The commands print Chinese, which a non-UTF-8 console cannot encode.
+for stream in (sys.stdout, sys.stderr):
+    stream.reconfigure(errors="replace")
+
 
 def cfg(**over):
     c = {k: dict(v) for k, v in run.DEFAULTS.items()}
