@@ -18,7 +18,7 @@
     <form id="login-form">
       <input class="field" id="pw" type="password" placeholder="密码" autocomplete="current-password" autofocus>
       <button class="btn primary" type="submit" style="justify-content:center">进门</button>
-      <div id="login-err" class="small" style="color:var(--accent-ink);min-height:1.4em"></div>
+      <div id="login-err" class="small" style="color:var(--accent-700);min-height:1.4em"></div>
     </form>
   </div>
 </div>
@@ -38,9 +38,10 @@
       <a href="#/settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>设置</a>
       <a href="#/run"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16v12H4z"/><path d="m8 10 3 2-3 2M13 14h3"/></svg>运行</a>
     </nav>
+    <div class="mini" id="mini"></div>
     <div class="foot">
-      <button class="btn icon" id="theme" title="换深浅色"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg></button>
-      <button class="btn" id="logout">退出</button>
+      <button class="btn icon ghost" id="theme" title="换深浅色"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg></button>
+      <button class="btn ghost" id="logout">退出</button>
     </div>
   </aside>
   <main class="main" id="view"></main>

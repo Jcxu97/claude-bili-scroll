@@ -93,7 +93,19 @@ function voice(s) {
   if (s.state === "browsing") return "在刷站呢。刷到好东西会告诉你的，别催。";
   return moodWhy(s) || "醒着，闲着。你要是有空，可以来找本小姐聊聊。";
 }
-const empty = (text, img = "normal") => `<div class="empty"><img src="img/${img}.webp" alt="">${esc(text)}</div>`;
+const ava = (img = "normal", size = 32) => `<div class="ava" style="width:${size}px;height:${size}px;background-image:url(img/${img}.webp)"></div>`;
+const empty = (text, img = "normal") => `<div class="empty">${ava(img, 76)}${esc(text)}</div>`;
+const ICON = {
+  heart: '<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>',
+  play: '<rect x="3" y="5" width="18" height="13" rx="2"/><path d="m10 9 5 2.5-5 2.5z"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/>',
+};
+const icon = n => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[n]}</svg>`;
+function setMini(s) {
+  const m = $("#mini");
+  if (m) m.innerHTML = `${ava(face(s), 38)}<div class="who"><b>Claude 大小姐</b><span>${STATE[s.state] || s.state}${moodWord(s) ? " · " + esc(moodWord(s)) : ""}</span></div>`;
+}
 
 function dayBar(s) {
   const p = s.plan;
@@ -104,13 +116,12 @@ function dayBar(s) {
   const busy = p.busy.map(([a, b, why]) => `<div class="busy" title="${esc(why)} ${hm(a)} 到 ${hm(b)}" style="left:${x(a)}%;width:${x(b) - x(a)}%"></div>`).join("");
   const now = s.now >= start && s.now <= start + span ? `<div class="now" style="left:${x(s.now)}%"></div>` : "";
   const marks = [6, 10, 14, 18, 22, 2].map(h => `<span>${pad(h)}:00</span>`).join("");
-  return `<div class="card"><div class="row" style="justify-content:space-between"><h3 style="margin:0">今天的作息</h3>
-    <span class="muted small">${md_(p.wake)} 起床 ${hm(p.wake)}，睡觉 ${hm(p.sleep)}</span></div>
+  return `<div class="card"><div class="card-head"><h3>今天的作息</h3>
+    <span class="muted small">${md_(p.wake)}，${hm(p.wake)} 起床，${hm(p.sleep)} 睡觉</span></div>
     <div class="day"><div class="awake" style="left:${x(p.wake)}%;width:${x(p.sleep) - x(p.wake)}%"></div>${busy}${now}</div>
     <div class="day-scale">${marks}</div>
-    <div class="legend"><span><i style="background:color-mix(in srgb,var(--accent) 22%,transparent)"></i>醒着</span>
-    <span><i style="background:color-mix(in srgb,var(--muted) 35%,transparent)"></i>在忙（${p.busy.map(b => esc(b[2])).join("、") || "今天没安排"}）</span>
-    <span><i style="background:var(--accent-ink)"></i>现在</span></div></div>`;
+    <div class="legend"><span><i style="background:color-mix(in srgb,var(--accent) 28%,transparent)"></i>醒着</span>
+    <span><i style="background:repeating-linear-gradient(135deg,var(--busy) 0 3px,transparent 3px 5px)"></i>在忙（${p.busy.map(b => esc(b[2])).join("、") || "今天没安排"}）</span></div></div>`;
 }
 
 function bubbles(chat, owner) {
@@ -120,10 +131,10 @@ function bubbles(chat, owner) {
     lastDay = day;
     const me = e.who === "owner", bot = e.who === "bot";
     const who = me ? owner : bot ? "她" : (e.from || "陌生人");
-    const where = e.channel === "dm" ? "私信" : `评论${e.title ? " · " + e.title : ""}`;
+    const where = e.channel === "dm" ? "私信" : `评论${e.title ? " · " + (e.title.length > 14 ? e.title.slice(0, 14) + "…" : e.title) : ""}`;
     const kind = bot && e.kind === "proactive" ? `<span class="pill accent tag">主动找你</span>` : bot && e.kind === "nudge" ? `<span class="pill accent tag">轻轻问候</span>` : "";
     const link = e.bvid ? ` · <a href="https://www.bilibili.com/video/${esc(e.bvid)}" target="_blank" rel="noopener">${esc(e.bvid)}</a>` : "";
-    const av = bot ? `<div class="av"><img src="img/normal.webp" alt=""></div>` : `<div class="av">${esc(who.slice(0, 1))}</div>`;
+    const av = bot ? ava("normal", 32) : `<div class="letter">${esc(who.slice(0, 1))}</div>`;
     return `${sep}<div class="msg ${me ? "me" : bot ? "" : "stranger"}">${av}<div><div class="t">${esc(who)} · ${hm(e.t)} · ${esc(where)}${link}${kind}</div>
       <div class="b">${inline(esc(e.text))}</div></div></div>`;
   }).join("");
@@ -140,33 +151,39 @@ pages[""] = async () => {
   if (!live(id)) return;
   const last = journal.split(/\n(?=## )/).filter(x => x.startsWith("## ")).pop() || "";
   const running = s.jobs.length ? s.jobs.map(j => `<span class="pill accent"><span class="dot live"></span>${esc({ browse: "刷站", inbox: "看消息", daily: "写日报", dryrun: "试运行" }[j] || j)}</span>`).join("") : "";
+  const h = new Date().getHours(), d = new Date();
+  const notes = [s.logged_in ? "" : "小号还没登录，去运行页扫码。", s.life_on ? "" : "作息模式没开，在设置里把 [life] 的 enabled 改成 true。"].filter(Boolean);
+  const nextBrowse = s.jobs.includes("browse") ? "刷着呢" : !s.life_on ? "按日报时间"
+    : s.next_session > s.now ? later(s.next_session, s.now) : { busy: "忙完就刷", asleep: "睡醒再说", paused: "暂停中" }[s.state] || "马上";
+  const stat = (ic, label, value, sub, extra = "", lead = false) => `<div class="card stat${lead ? " lead" : ""}">
+    <div class="top"><span class="ico">${icon(ic)}</span>${label}</div><div class="value">${value}</div>${extra}<div class="sub">${sub || "&nbsp;"}</div></div>`;
+  setMini(s);
   view().innerHTML = `
-    <div class="page-head"><h1>${new Date().getHours() < 11 ? "早" : new Date().getHours() < 18 ? "下午好" : "晚上好"}，${esc(s.owner)}</h1>
-      <p>${s.logged_in ? "" : "小号还没登录，去运行页扫码。"}${s.life_on ? "" : "作息模式没开，在设置里把 [life] 的 enabled 改成 true。"}</p></div>
     <div class="grid">
       <div class="card hero">
         <div class="figure"><img src="img/${face(s)}.webp" alt="Claude 大小姐"></div>
-        <div class="talk"><div class="bubble">${esc(voice(s))}</div>
-          <div class="meta"><span class="pill ${s.state === "browsing" ? "accent" : ""}"><span class="dot ${s.state === "browsing" ? "live" : ""}"></span>${STATE[s.state] || s.state}</span>
+        <div class="talk">
+          <p class="hello">${h < 5 ? "还没睡呀" : h < 11 ? "早" : h < 18 ? "下午好" : "晚上好"}，${esc(s.owner)}</p>
+          <p class="date">${d.getMonth() + 1} 月 ${d.getDate()} 日，星期${"日一二三四五六"[d.getDay()]}</p>
+          <div class="bubble">${esc(voice(s))}</div>
+          <div class="meta"><span class="pill ${s.state === "browsing" ? "accent" : ""}"><span class="dot ${s.state === "browsing" ? "live" : s.state === "awake" ? "ok" : ""}"></span>${STATE[s.state] || s.state}</span>
           ${moodWord(s) ? `<span class="pill">心情 ${esc(moodWord(s))}</span>` : ""}${running}</div></div>
       </div>
+      ${notes.length ? `<div class="card small" style="background:var(--accent-50);box-shadow:none;color:var(--accent-700)">${notes.join(" ")}</div>` : ""}
       <div class="grid g4">
-        <div class="card stat"><div class="label">今天主动找你</div><div class="value">${s.contacts_today} / ${s.max_contacts}</div>
-          <div class="sub">${s.can_contact ? (s.can_contact === "nudge" ? "你两次没回，她可能会轻轻问一句" : "想找你的时候会找") : esc(s.contact_note)}</div></div>
-        <div class="card stat"><div class="label">下次刷站</div><div class="value">${s.jobs.includes("browse") ? "刷着呢" : !s.life_on ? "按日报时间"
-            : s.next_session > s.now ? later(s.next_session, s.now) : { busy: "忙完就刷", asleep: "睡醒再说", paused: "暂停中" }[s.state] || "马上"}</div>
-          <div class="sub">${s.life_on && s.next_session > s.now ? hm(s.next_session) + " 前后" : ""}</div></div>
-        <div class="card stat"><div class="label">下次看消息</div><div class="value">${s.jobs.includes("inbox") ? "看着呢" : later(s.next_inbox, s.now)}</div>
-          <div class="sub">${s.state === "asleep" ? "睡醒再看" : s.state === "busy" ? "在忙，回得慢" : ""}</div></div>
-        <div class="card stat"><div class="label">作息</div><div class="value">${s.plan ? hm(s.plan.wake) + " 到 " + hm(s.plan.sleep) : "未开"}</div>
-          <div class="sub">每天随机浮动一点</div></div>
+        ${stat("heart", "今天主动找你", `${s.contacts_today}<small>/ ${s.max_contacts}</small>`,
+          s.can_contact ? (s.can_contact === "nudge" ? "你两次没回，她可能会轻轻问一句" : "想找你的时候会找") : esc(s.contact_note),
+          `<div class="meter"><i style="width:${Math.min(100, s.contacts_today / Math.max(1, s.max_contacts) * 100)}%"></i></div>`, true)}
+        ${stat("play", "下次刷站", nextBrowse, s.life_on && s.next_session > s.now && !s.jobs.includes("browse") ? hm(s.next_session) + " 前后" : "")}
+        ${stat("mail", "下次看消息", s.jobs.includes("inbox") ? "看着呢" : later(s.next_inbox, s.now), s.state === "asleep" ? "睡醒再看" : s.state === "busy" ? "在忙，回得慢" : "")}
+        ${stat("sun", "作息", s.plan ? hm(s.plan.wake) + " 到 " + hm(s.plan.sleep) : "未开", "每天随机浮动一点")}
       </div>
       ${dayBar(s)}
-      <div class="grid g2">
-        <div class="card"><div class="row" style="justify-content:space-between"><h3 style="margin:0">最近的聊天</h3><a href="#/chat" class="small">全部</a></div>
-          <div class="chat" style="margin-top:10px">${recent.length ? bubbles(recent, s.owner) : empty("这几天还没聊过。去 B 站私信本小姐试试？")}</div></div>
-        <div class="card"><div class="row" style="justify-content:space-between"><h3 style="margin:0">最近一次刷站</h3><a href="#/journal" class="small">日记</a></div>
-          <div style="margin-top:10px">${last ? md(last) : empty("今天还没刷。醒着有空就会去的。", "browsing")}</div></div>
+      <div class="grid g2 top">
+        <div class="card"><div class="card-head"><h3>最近的聊天</h3><a href="#/chat" class="small">全部</a></div>
+          <div class="chat">${recent.length ? bubbles(recent, s.owner) : empty("这几天还没聊过。去 B 站私信本小姐试试？")}</div></div>
+        <div class="card"><div class="card-head"><h3>最近一次刷站</h3><a href="#/journal" class="small">日记</a></div>
+          <div>${last ? md(last) : empty("今天还没刷。醒着有空就会去的。", "browsing")}</div></div>
       </div>
     </div>`;
   timer = setTimeout(route, 20000);
@@ -176,13 +193,14 @@ pages.chat = async () => {
   const id = seq;
   const [s, chat] = await Promise.all([api("status"), api("chat?days=30")]);
   if (!live(id)) return;
+  setMini(s);
   const draw = () => {
     const all = $("#strangers").checked;
     const rows = chat.filter(e => all || e.who !== "stranger");
     $("#chat").innerHTML = rows.length ? bubbles(rows, s.owner) : empty("还没有聊天记录。私信小号说句话，这里就有了。");
     window.scrollTo(0, document.body.scrollHeight);
   };
-  view().innerHTML = `<div class="page-head"><h1>对话</h1><label class="row small muted"><input type="checkbox" id="strangers"> 显示陌生人</label></div>
+  view().innerHTML = `<div class="page-head"><div><h1>对话</h1><p>最近 30 天的私信和评论。</p></div><label class="row small muted"><input type="checkbox" id="strangers"> 显示陌生人</label></div>
     <div class="card"><div class="chat" id="chat"></div></div>`;
   $("#strangers").onchange = draw;
   draw();
@@ -191,9 +209,9 @@ pages.chat = async () => {
 async function docView(folders, title, hint, img) {
   let folder = folders[0][0], names = [];
   const id = seq;
-  view().innerHTML = `<div class="page-head"><h1>${title}</h1><p>${hint}</p></div>
+  view().innerHTML = `<div class="page-head"><div><h1>${title}</h1><p>${hint}</p></div></div>
     ${folders.length > 1 ? `<div class="tabs" id="tabs" style="margin-bottom:14px">${folders.map(([f, n]) => `<button data-f="${f}">${n}</button>`).join("")}</div>` : ""}
-    <div class="split"><div class="card list" id="names"></div><div class="card" id="doc"></div></div>`;
+    <div class="split"><div class="card list" id="names"></div><div class="card doc" id="doc"></div></div>`;
   const open = async name => {
     $("#names").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.n === name));
     const { text } = await api(`files/${folder}/${encodeURIComponent(name)}`);
@@ -224,7 +242,7 @@ const MEMORY = [
 pages.memory = async () => {
   const id = seq, mem = await api("memory");
   if (!live(id)) return;
-  view().innerHTML = `<div class="page-head"><h1>记忆</h1><p>她自己维护这些文件。你也可以直接改，下一轮她就会读到。</p></div>
+  view().innerHTML = `<div class="page-head"><div><h1>记忆</h1><p>她自己维护这些文件。你也可以直接改，下一轮她就会读到。</p></div></div>
     <div class="grid g2">${MEMORY.map(([n, t, h]) => `<div class="card"><h3>${t}</h3><p class="muted small" style="margin-top:-4px">${h}</p>
       <textarea class="edit${n === "mood.txt" ? " short" : ""}" data-n="${n}" placeholder="还是空的">${esc(mem[n])}</textarea>
       <div class="row end" style="margin-top:8px"><button class="btn primary" data-save="${n}">保存</button></div></div>`).join("")}</div>`;
@@ -238,7 +256,7 @@ pages.memory = async () => {
 pages.settings = async () => {
   const id = seq, { text } = await api("config");
   if (!live(id)) return;
-  view().innerHTML = `<div class="page-head"><h1>设置</h1><p>就是 config.toml。保存前会检查格式，不对就不存。</p></div>
+  view().innerHTML = `<div class="page-head"><div><h1>设置</h1><p>就是 config.toml。保存前会检查格式，不对就不存。</p></div></div>
     <div class="grid"><div class="card"><textarea class="edit tall" id="cfg" spellcheck="false">${esc(text)}</textarea>
       <div class="row" style="justify-content:space-between;margin-top:10px"><span class="muted small">下一轮开始生效。[web] 的地址和端口要重新运行一次 schedule 才会换。</span>
       <button class="btn primary" id="save">保存</button></div></div>
@@ -264,24 +282,26 @@ const ACTIONS = [
 pages.run = async () => {
   const id = seq, s = await api("status");
   if (!live(id)) return;
+  setMini(s);
   const JOB = { browse: "刷站", inbox: "看消息", daily: "写日报", dryrun: "试运行" };
-  view().innerHTML = `<div class="page-head"><h1>运行</h1><p>${s.jobs.length ? "正在" + s.jobs.map(j => JOB[j] || j).join("、") : "现在没有在跑的任务"}</p></div>
+  view().innerHTML = `<div class="page-head"><div><h1>运行</h1><p>${s.jobs.length ? "正在" + s.jobs.map(j => JOB[j] || j).join("、") : "现在没有在跑的任务"}</p></div></div>
     <div class="grid">
       <div class="card"><h3>手动操作</h3><div class="actions">
-        ${ACTIONS.map(([a, t, h]) => `<button class="btn" data-a="${a}"><b>${t}</b><span>${h}</span></button>`).join("")}
-        <button class="btn ${s.paused ? "primary" : ""}" data-a="${s.paused ? "resume" : "pause"}"><b>${s.paused ? "继续" : "暂停"}</b><span>${s.paused ? "恢复作息和查消息" : "先别刷也别回消息"}</span></button>
+        ${ACTIONS.map(([a, t, h], i) => `<button class="btn${i === 0 && !s.paused ? " primary" : ""}" data-a="${a}"><b>${t}</b><span>${h}</span></button>`).join("")}
+        <button class="btn${s.paused ? " primary" : ""}" data-a="${s.paused ? "resume" : "pause"}"><b>${s.paused ? "继续" : "暂停"}</b><span>${s.paused ? "恢复作息和查消息" : "先别刷也别回消息"}</span></button>
       </div>${s.doctor ? `<div class="log" style="margin-top:12px">${esc(s.doctor)}</div>` : ""}</div>
       <div class="grid g2">
         <div class="card"><h3>小号登录</h3><p class="muted small">${s.logged_in ? "已经登录。凭证过期了就在这里重新扫码。" : "还没登录。"}用小号的 B 站 App 扫码，确认时选"长期"。</p>
           <div id="qr" class="row" style="gap:16px"></div><button class="btn" id="qr-start" style="margin-top:10px">${s.logged_in ? "重新扫码登录" : "扫码登录"}</button></div>
-        <div class="card"><h3>今天的状态</h3><div class="md"><ul>
-          <li>${STATE[s.state] || s.state}${s.why ? "，" + esc(s.why) : ""}</li>
-          <li>今天主动找你 ${s.contacts_today} 次，上限 ${s.max_contacts} 次。${s.can_contact ? "" : esc(s.contact_note)}</li>
-          <li>下次看消息 ${later(s.next_inbox, s.now)}${s.life_on ? `，下次刷站 ${later(s.next_session, s.now)}` : ""}</li></ul></div></div>
+        <div class="card"><h3>今天的状态</h3><dl class="facts">
+          <div><dt>现在</dt><dd>${STATE[s.state] || s.state}${s.why ? "，" + esc(s.why) : ""}</dd></div>
+          <div><dt>主动找你</dt><dd>${s.contacts_today} 次，上限 ${s.max_contacts} 次${s.can_contact ? "" : '<br><span class="muted small">' + esc(s.contact_note) + "</span>"}</dd></div>
+          <div><dt>下次看消息</dt><dd>${later(s.next_inbox, s.now)}</dd></div>
+          ${s.life_on ? `<div><dt>下次刷站</dt><dd>${later(s.next_session, s.now)}</dd></div>` : ""}</dl></div>
       </div>
-      <div class="card"><div class="row" style="justify-content:space-between"><h3 style="margin:0">日志</h3>
+      <div class="card"><div class="card-head"><h3>日志</h3>
         <div class="row"><select id="day" class="btn"></select><label class="row small muted"><input type="checkbox" id="follow" checked> 自动刷新</label></div></div>
-        <div class="log" id="log" style="margin-top:10px"></div></div>
+        <div class="log" id="log"></div></div>
     </div>`;
   view().querySelectorAll("[data-a]").forEach(b => b.onclick = async () => {
     b.disabled = true;
