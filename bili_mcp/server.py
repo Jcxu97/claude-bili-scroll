@@ -23,8 +23,10 @@ B站数据采集 MCP 服务，支持 OpenClaw / Claude Code / Cursor / Cline
 #         再给了 BILI_DM_OWNER（主号 UID），发给别人的私信每人只能一条，40 字以内
 #      ⑪ BILI_DM_MAX / BILI_REPLY_MAX 限制一个进程最多发几条私信、几条新评论；BILI_DM_KIND 是
 #         proactive 或 nudge（主动找主号）时，私信有长度上限，也不许带指责和逼回复的话
-#      ⑫ 发出去的私信和评论回复写进 BILI_CHAT_LOG（chat.jsonl），宿主靠它算主动联系的次数
+#      ⑫ 发出去的私信和评论回复写进 BILI_CHAT_LOG（chat.jsonl），宿主靠它算主动联系和评论的次数。
+#         BILI_REPLY_TO 给了的话，回复评论只能回名单里的 rpid，每条一次；BILI_DM_UNTIL 之后不再主动找主号
 #      ⑬ 新增 `bili_favorite_add`：把视频收进 BILI_FAV_TITLE 这个收藏夹，没有就新建
+#      ⑭ `bili_subtitle` 拿到空的字幕列表时隔 2 秒再问一次（播放器接口偶尔会漏掉 AI 字幕）
 import asyncio
 import json
 import base64
@@ -68,8 +70,9 @@ def tool():
 
 _SENT = {"dm": 0, "reply": 0}
 # A proactive message is there to share, not to make the owner feel guilty. These are refused in code.
-_PUSHY = ("为什么不回", "怎么还不回", "再不回", "必须回", "快回我", "不在乎我", "你根本", "拉黑", "不理你了",
-          "后果自负", "等着瞧", "最后一次")
+_PUSHY = ("为什么不回", "为啥不回", "咋不回", "怎么不回", "怎么还不回", "又不回", "再不回", "必须回", "快回我",
+          "不理我", "不想理我", "不在乎我", "你根本", "拉黑", "不理你了", "后果自负", "等着瞧", "最后一次")
+_REPLIED = set()  # comments this process already answered
 
 
 def _over(env_name, key):
@@ -440,6 +443,10 @@ async def bili_subtitle(bvid: str) -> str:
 
     subtitle_list = await v.get_subtitle(cid=cid)
     subtitles = subtitle_list.get("subtitles", [])
+    if not subtitles:
+        # The player API sometimes returns an empty list for a video that has AI subtitles. Ask once more.
+        await asyncio.sleep(2)
+        subtitles = (await v.get_subtitle(cid=cid)).get("subtitles", [])
 
     if not subtitles:
         return json.dumps({"message": "该视频没有字幕"}, ensure_ascii=False)
@@ -615,14 +622,21 @@ async def bili_reply(bvid: str, text: str, rpid: int = 0, root: int = 0) -> str:
     """
     if rpid == 0 and _over("BILI_REPLY_MAX", "reply"):
         return json.dumps({"success": False, "error": "这一轮不能再发新评论了"}, ensure_ascii=False)
+    if rpid != 0 and "BILI_REPLY_TO" in os.environ and (
+            str(rpid) not in os.environ["BILI_REPLY_TO"].split(",") or rpid in _REPLIED):
+        return json.dumps({"success": False, "error": "这一轮只能回消息里列出的评论，每条一次"}, ensure_ascii=False)
     cred = get_cred()
     v = video.Video(bvid=bvid, credential=cred)
     info = await v.get_info()
     aid = info["aid"]
 
+    # Logged and counted before sending: a timeout can still have posted it, and a missed count is worse.
+    _chat_log({"who": "bot", "channel": "comment", "kind": "comment", "bvid": bvid, "title": info.get("title", ""),
+               "text": text, "reply_to": rpid, "session": os.environ.get("BILI_SESSION", "")})
+    _REPLIED.add(rpid)
     try:
         if rpid == 0:
-            _SENT["reply"] += 1  # counted before sending: a timeout can still have posted it
+            _SENT["reply"] += 1
             # 发表新评论
             result = await comment.send_comment(
                 text=text,
@@ -653,11 +667,9 @@ async def bili_reply(bvid: str, text: str, rpid: int = 0, root: int = 0) -> str:
                 val = result.get(key)
                 if isinstance(val, (int, str)) and str(val).strip() and str(val) != "0":
                     out[key] = val
-        _chat_log({"who": "bot", "channel": "comment", "kind": "comment", "bvid": bvid, "title": info.get("title", ""),
-                   "text": text, "rpid": out.get("rpid", 0), "reply_to": rpid,
-                   "session": os.environ.get("BILI_SESSION", "")})
         return json.dumps(out, ensure_ascii=False)
     except Exception as e:
+        _chat_log({"who": "bot", "channel": "comment", "kind": "failed", "text": f"上一条评论没发出去：{e}"[:200]})
         return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
 
 
@@ -1453,6 +1465,8 @@ async def bili_send_message(receiver_uid: int, text: str) -> str:
         return json.dumps({"success": False, "error": "这一轮的私信已经发够了"}, ensure_ascii=False)
     kind = os.environ.get("BILI_DM_KIND") or "reply"
     if kind in ("proactive", "nudge"):
+        if time.time() > float(os.environ.get("BILI_DM_UNTIL") or "inf"):
+            return json.dumps({"success": False, "error": "主号要睡了，现在不主动找"}, ensure_ascii=False)
         if len(text or "") > (60 if kind == "nudge" else 150):
             return json.dumps({"success": False, "error": "主动找主号的私信太长了，说短一点"}, ensure_ascii=False)
         if any(w in (text or "") for w in _PUSHY):
@@ -1463,23 +1477,25 @@ async def bili_send_message(receiver_uid: int, text: str) -> str:
     if not text or not text.strip():
         return json.dumps({"success": False, "error": "text 不能为空"}, ensure_ascii=False)
 
+    # Counted and logged before sending, so a timeout after delivery still counts as a contact.
+    _SENT["dm"] += 1
+    _DM_SENT.add(receiver_uid)
+    _chat_log({"who": "bot", "channel": "dm", "to": receiver_uid, "text": text.strip(), "kind": kind,
+               "session": os.environ.get("BILI_SESSION", "")})
     try:
-        _SENT["dm"] += 1
         result = await session.send_msg(
             credential=cred,
             receiver_id=receiver_uid,
             msg_type=session.EventType.TEXT,
             content=text.strip(),
         )
-        _DM_SENT.add(receiver_uid)
-        _chat_log({"who": "bot", "channel": "dm", "to": receiver_uid, "text": text.strip(), "kind": kind,
-                   "session": os.environ.get("BILI_SESSION", "")})
         return json.dumps({
             "success": True,
             "message": f"私信已发送给UID:{receiver_uid}",
             "data": result if isinstance(result, dict) else str(result),
         }, ensure_ascii=False)
     except Exception as e:
+        _chat_log({"who": "bot", "channel": "dm", "kind": "failed", "text": f"上一条私信没发出去：{e}"[:200]})
         return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
 
 

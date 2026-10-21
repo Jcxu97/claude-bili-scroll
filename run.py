@@ -55,6 +55,11 @@ INBOX_TOOLS = ["bili_search", "bili_subtitle", "bili_danmaku", "bili_frames", "b
                "bili_check_credential", "bili_favorite_add"]
 BROWSE_TOOLS = SCROLL_TOOLS + ["bili_danmaku", "bili_frames", "bili_favorite_add"]
 CLAUDE_FILE_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep"]
+# The agent works in the data folder. It must not read the login or the tokens, nor rewrite the files that the
+# limits are counted from. Read rules also cover Grep and Glob; Edit rules cover every tool that writes.
+PROTECTED = " ".join([f"Read(./{f})" for f in ("credential.json", "agent.env")] +
+                     [f"Edit(./{f})" for f in ("credential.json", "agent.env", "chat.jsonl", "inbox-state.json",
+                                               "life.json")])
 
 
 def load_config(path):
@@ -118,7 +123,7 @@ def build_prompt(cfg, task, dry_run, messages=None, ctx=None):
             tools.append("bili_reply")
     elif task == "inbox":
         channels = {m.get("channel", "comment") for m in messages or []}
-        tools = list(INBOX_TOOLS)
+        tools = [t for t in INBOX_TOOLS if not (dry_run and t == "bili_favorite_add")]
         if not dry_run:
             tools += [t for ch, t in (("comment", "bili_reply"), ("dm", "bili_send_message")) if ch in channels]
         params.append(f"主号昵称：{owner_name(cfg)}")
@@ -168,7 +173,7 @@ def agent_command(cfg, workspace, mcp_json, prompt_file, tools, dm_to=(), extra=
         allowed = [f"mcp__bili__{t}" for t in tools] + CLAUDE_FILE_TOOLS
         cmd = ["claude", "-p", "--mcp-config", str(mcp_json), "--strict-mcp-config",
                "--permission-mode", "acceptEdits", "--allowedTools", " ".join(allowed),
-               "--disallowedTools", "Bash PowerShell WebFetch WebSearch Agent"]
+               "--disallowedTools", "Bash PowerShell WebFetch WebSearch Agent " + PROTECTED]
         cmd += ["--model", model] if model else []
         cmd += ["--effort", effort] if effort else []
         return cmd
@@ -197,10 +202,11 @@ def run_agent(cfg, workspace, task, dry_run, messages=None, ctx=None, extra=None
         dm_to = sorted({m["mid"] for m in messages or [] if m.get("channel") == "dm"})
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "logs").mkdir(exist_ok=True)
-    prompt_file = workspace / f".prompt-{task}.md"
+    tag = task + ("-dry" if dry_run else "")
+    prompt_file = workspace / f".prompt-{tag}.md"
     prompt_file.write_text(prompt, encoding="utf-8")
     # Each task gets its own file: a browse round and an inbox check can run at the same time.
-    mcp_json = workspace / f".mcp-{task}.json"
+    mcp_json = workspace / f".mcp-{tag}.json"
     spec = mcp_server_spec(cfg, tools, workspace, dm_to, extra)
     mcp_json.write_text(json.dumps({"mcpServers": {"bili": spec}}, indent=2), encoding="utf-8")
     cmd = agent_command(cfg, workspace, mcp_json, prompt_file, tools, dm_to, extra)
@@ -473,10 +479,12 @@ def cmd_inbox(cfg, workspace, dry_run, note=""):
     if not dry_run:
         write_json(state_file, state)
         for m in todo:
-            life.append_chat(chat_file, {"t": m["time"] or int(time.time()), "who": m["kind"], "mid": m["mid"],
+            # Local time, like the bot's own entries: Bilibili's clock and ours can differ by minutes.
+            life.append_chat(chat_file, {"t": int(time.time()), "sent": m["time"], "who": m["kind"], "mid": m["mid"],
                                          "from": m["from"], "channel": m["channel"], "text": m["content"],
                                          "bvid": m["bvid"], "title": m["title"]})
-    extra = {"BILI_DM_KIND": "reply", "BILI_REPLY_MAX": "0", "BILI_SESSION": f"inbox-{int(time.time())}"}
+    extra = {"BILI_DM_KIND": "reply", "BILI_REPLY_MAX": "0", "BILI_SESSION": f"inbox-{int(time.time())}",
+             "BILI_REPLY_TO": ",".join(str(m["rpid"]) for m in todo if m["channel"] == "comment")}
     return run_agent(cfg, workspace, "inbox", dry_run, todo, ctx, extra)
 
 
@@ -488,9 +496,13 @@ def write_json(path, data):
 
 def cmd_once(cfg, workspace, dry_run):
     load_cred(cfg)
-    rc = run_agent(cfg, workspace, "scroll", dry_run)
     day = date.today().isoformat()
-    verify_comments(today_comments(workspace, day), workspace / "out" / f"{day}.md")
+    extra = {"BILI_REPLY_MAX": str(int(cfg["comment"]["max_per_run"])), "BILI_REPLY_TO": "",
+             "BILI_SESSION": f"once-{int(time.time())}"}
+    rc = run_agent(cfg, workspace, "scroll", dry_run, extra=extra)
+    report = workspace / "out" / f"{day}.md"
+    # serve treats an existing report as done, so do not create one just for the check
+    verify_comments(today_comments(workspace, day), report if report.exists() else workspace / "journal" / f"{day}.md")
     return rc
 
 
@@ -501,14 +513,19 @@ STYLES = {"short": "随手刷几条，十分钟上下，看三到六个视频，
 def browse_context(cfg, workspace, style, dry_run, now):
     """Everything one browse round needs to know: how long, may it message the owner, may it comment."""
     owner, c, s = int(cfg["inbox"]["owner_uid"] or 0), cfg["comment"], cfg["scroll"]
-    chat = life.read_chat(workspace / "chat.jsonl")
-    mode, why = life.proactive(chat, cfg["life"], now) if owner else (None, "没填主号 UID")
-    day = date.fromtimestamp(now).isoformat()
-    comment_ok = bool(c["enabled"] and c["at"]) and len(today_comments(workspace, day)) < int(c["max_per_run"])
+    # 60 days, so the "wait for the owner after a nudge" rule does not run out after two weeks of silence
+    chat = life.read_chat(workspace / "chat.jsonl", days=60)
+    # Owner answers reach chat.jsonl only through the inbox. Without it every share would look unanswered.
+    mode, why = (life.proactive(chat, cfg["life"], now) if owner and cfg["inbox"]["enabled"]
+                 else (None, "收件箱没开或者没填主号 UID"))
+    day0 = datetime.combine(date.fromtimestamp(now), datetime.min.time()).timestamp()
+    posted = sum(e["t"] >= day0 and e.get("who") == "bot" and e.get("kind") == "comment" and not e.get("reply_to")
+                 for e in chat)
+    comment_ok = bool(c["enabled"] and c["at"]) and posted < int(c["max_per_run"])
     t = datetime.fromtimestamp(now)
     params = [f"现在是 {t:%H:%M}", f"这次怎么刷：{STYLES[style]}",
               {"share": "私信主号：可以。有想分享的视频或者想接着聊的话才发，最多 2 条，没有就不发",
-               "nudge": "私信主号：主号连着两次没回你。可以发一条轻轻的、撒娇式的问候（60 字以内），也可以不发",
+               "nudge": "私信主号：轻轻的问候。主号连着两次没回你，可以发一条软一点的问候（60 字以内），也可以不发",
                None: f"私信主号：这一轮不发（{why}）"}[mode],
               f"评论：{'可以在最值得的一条下面发 1 条 @ 主号' if comment_ok else '这一轮不发'}，主号昵称 {c['at'] or '未设置'}",
               f"感兴趣的方向（只是参考，你自己的兴趣在记忆里）：{'、'.join(s['keywords'])}",
@@ -516,18 +533,19 @@ def browse_context(cfg, workspace, style, dry_run, now):
     if mode:
         params.append(f"主号 UID：{owner}")
     week = f"{t.isocalendar().year}-W{t.isocalendar().week:02d}"
-    if t.weekday() == 6 and t.hour >= 18 and not (workspace / "journal" / f"week-{week}.md").exists():
+    if t.weekday() == 6 and t.hour >= 18 and not dry_run and not (workspace / "journal" / f"week-{week}.md").exists():
         params.append(f"今天是周日晚上，顺便写本周回顾 journal/week-{week}.md")
     feedback = life.share_feedback(chat)
     parts = [memory_part(workspace), chat_part([e for e in chat if e.get("who") in ("owner", "bot")], cfg),
              "## 最近几次主动找主号的结果\n\n" + ("\n".join(
                  f"{datetime.fromtimestamp(f['t']):%m-%d %H:%M} {'回了' if f['answered'] else '没回'}：{f['text']}"
                  for f in feedback) or "（还没有）")]
-    tools = list(BROWSE_TOOLS)
+    tools = [x for x in BROWSE_TOOLS if not (dry_run and x == "bili_favorite_add")]
     if not dry_run:
         tools += (["bili_send_message"] if mode else []) + (["bili_reply"] if comment_ok else [])
     extra = {"BILI_DM_KIND": "proactive" if mode == "share" else "nudge", "BILI_DM_MAX": "2" if mode == "share" else "1",
-             "BILI_REPLY_MAX": "1" if comment_ok else "0", "BILI_SESSION": f"browse-{int(now)}"}
+             "BILI_REPLY_MAX": "1" if comment_ok else "0", "BILI_REPLY_TO": "", "BILI_SESSION": f"browse-{int(now)}",
+             "BILI_DM_UNTIL": str(int(life.quiet_start(now, cfg["life"]["owner_quiet"])))}
     return {"params": params, "parts": parts, "tools": tools}, extra, [owner] if mode else []
 
 
@@ -609,7 +627,10 @@ def kill_job(p):
             os.killpg(p.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-    p.wait()
+    try:
+        p.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        pass  # reap tries again next minute; never block the loop that holds the lock
 
 
 NOTES = {"awake": "有空", "busy": "在忙", "browsing": "正在刷站"}
@@ -629,7 +650,8 @@ class Serve:
         self.lock = threading.RLock()  # loop holds it around tick, and tick takes it again for the actions
         self.wake = threading.Event()
         self.jobs, self.actions, self.tries = {}, [], {}
-        self.daily_started, self.doctor_out = 0.0, ""
+        self.daily_started, self.doctor_out, self.force_inbox = 0.0, "", False
+        self.web, self.web_error = None, ""
 
     def running(self, name):
         j = self.jobs.get(name)
@@ -670,14 +692,18 @@ class Serve:
         if cfg["life"]["enabled"]:
             if st == "asleep":
                 self.life["next_inbox"] = max(self.life.get("next_inbox", 0), self.life["plan"]["wake"])
-            elif st == "awake" and not self.running("browse") and now >= self.life.get("next_session", 0):
+            elif st == "awake" and "browse" not in self.jobs and now >= self.life.get("next_session", 0):
                 style = life.session_style(self.rng)
                 self.start("browse", ["browse", "--style", style], JOB_LIMITS[style], now)
                 st = "browsing"
+        else:  # a wake time left over from the routine must not hold up the plain every-N-minutes checks
+            self.life["next_inbox"] = min(self.life.get("next_inbox", 0), now + self.every * 60)
         if not cfg["life"]["enabled"] or cfg["life"].get("daily_report"):
             self.daily(now)
-        if (cfg["inbox"]["enabled"] and int(cfg["inbox"]["owner_uid"] or 0) and st != "asleep"
-                and not self.running("inbox") and now >= self.life.get("next_inbox", 0)):
+        if (cfg["inbox"]["enabled"] and int(cfg["inbox"]["owner_uid"] or 0) and "inbox" not in self.jobs
+                and (self.force_inbox or (st != "asleep" and now >= self.life.get("next_inbox", 0)))):
+            self.force_inbox = False
+            st = "awake" if st == "asleep" else st
             self.start("inbox", ["inbox", "--note", NOTES[st] + (f"（{why}）" if why else "")], JOB_LIMITS["inbox"], now)
             delay = life.inbox_delay(st, self.every, self.rng) if cfg["life"]["enabled"] else self.every * 60
             self.life["next_inbox"] = now + delay
@@ -697,21 +723,24 @@ class Serve:
         elif action == "resume":
             self.life["paused"] = False
         elif action == "inbox":
-            self.life["next_inbox"] = 0
-        elif action == "browse" and not self.running("browse"):
+            self.force_inbox = True
+        elif action == "browse" and "browse" not in self.jobs:
             self.start("browse", ["browse", "--style", "short"], JOB_LIMITS["short"], now)
-        elif action == "dryrun" and not self.running("dryrun"):
+        elif action == "dryrun" and "dryrun" not in self.jobs:
             self.start("dryrun", ["browse", "--style", "short", "--dry-run"], JOB_LIMITS["dryrun"], now)
-        elif action == "daily" and not self.running("daily"):
+        elif action == "daily" and "daily" not in self.jobs:
             self.start("daily", ["once"], JOB_LIMITS["daily"], now)
-        elif action == "doctor":
+        elif action == "doctor" and self.doctor_out != "检查中…":
             threading.Thread(target=self.doctor, daemon=True).start()
 
     def doctor(self):
         self.doctor_out = "检查中…"
-        p = subprocess.run([sys.executable, str(ROOT / "run.py"), "--config", self.config, "doctor"], cwd=ROOT,
-                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
-        self.doctor_out = (p.stdout + p.stderr).strip()
+        try:
+            p = subprocess.run([sys.executable, str(ROOT / "run.py"), "--config", self.config, "doctor"], cwd=ROOT,
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
+            self.doctor_out = (p.stdout + p.stderr).strip()
+        except Exception as e:
+            self.doctor_out = f"体检没跑完：{type(e).__name__}: {e}"
 
     def request(self, action):
         with self.lock:
@@ -732,13 +761,32 @@ class Serve:
                     "contacts_today": len({e.get("session") for e in chat if e["t"] >= day0 and e.get("who") == "bot"
                                            and e.get("kind") in ("proactive", "nudge")}),
                     "max_contacts": cfg["life"]["max_contacts_per_day"], "can_contact": mode, "contact_note": reason,
-                    "mood": mood.read_text(encoding="utf-8").strip() if mood.exists() else "",
+                    "mood": mood.read_text(encoding="utf-8", errors="replace").strip() if mood.exists() else "",
                     "logged_in": cred_file(cfg).exists(), "owner": owner_name(cfg), "doctor": self.doctor_out}
+
+    def start_web(self, cfg):
+        """Try every minute: at boot the Tailscale address can come up later than serve."""
+        if self.web or not cfg["web"]["password"]:
+            return
+        import web
+        try:
+            self.web = web.start(self, sys.modules[__name__], cfg["web"])
+            log_line(self.ws, f"后台网页在 http://{cfg['web']['host']}:{cfg['web']['port']}")
+        except Exception as e:
+            if str(e) != self.web_error:
+                self.web_error = str(e)
+                log_line(self.ws, f"后台网页没起来，每分钟再试：{type(e).__name__}: {e}")
+
+    def stop(self, *_):
+        for p, _, _ in list(self.jobs.values()):
+            kill_job(p)
+        sys.exit(0)
 
     def loop(self):
         while True:
             try:
                 cfg = load_config(self.config)
+                self.start_web(cfg)
                 with self.lock:
                     self.tick(cfg, time.time())
                     write_json(self.life_file, self.life)
@@ -758,13 +806,9 @@ def cmd_serve(config, workspace, at, every):
     cfg = load_config(config)
     log_line(workspace, "serve 启动，" + ("按作息刷站和查消息" if cfg["life"]["enabled"] else
                                         f"开了收件箱就每 {every} 分钟查一次消息，每天 {at} 以后刷一轮"))
-    if cfg["web"]["password"]:
-        import web
-        try:
-            web.start(srv, sys.modules[__name__], cfg["web"])
-            log_line(workspace, f"后台网页在 http://{cfg['web']['host']}:{cfg['web']['port']}")
-        except OSError as e:
-            log_line(workspace, f"后台网页没起来：{e}")
+    if sys.platform != "win32":
+        import signal
+        signal.signal(signal.SIGTERM, srv.stop)  # jobs run in their own sessions, so take them down with serve
     srv.loop()
 
 

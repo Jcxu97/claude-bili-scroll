@@ -85,6 +85,13 @@ def in_quiet(now, quiet):
     return start <= m < end if start <= end else (m >= start or m < end)
 
 
+def quiet_start(now, quiet):
+    """When the owner's next quiet hours begin. A long session must stop messaging there."""
+    t = datetime.fromtimestamp(now)
+    start = datetime.combine(t.date(), datetime.min.time()) + timedelta(minutes=minutes(quiet[0]))
+    return (start if start > t else start + timedelta(days=1)).timestamp()
+
+
 def proactive(chat, cfg, now):
     """May the bot message the owner first? Return (mode, reason). mode is "share", "nudge" or None.
 

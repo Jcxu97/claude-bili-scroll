@@ -171,6 +171,10 @@ class WebTest(unittest.TestCase):
                 self.assertEqual(call("GET", "/api/status", headers=auth)[0], 200)
                 self.assertEqual(call("GET", "/api/files/journal/..%2Fconfig.toml", headers=auth)[0], 404)
                 self.assertEqual(call("GET", "/../config.toml")[0], 404)
+                self.assertEqual(call("GET", "/api/status", headers=dict(auth, Host="evil.example"))[0], 403)
+                bad = call("PUT", "/api/config", {"text": '[life]\nwake = "9"\n'}, dict(auth, **{"X-CBS": "1"}))
+                self.assertEqual(bad[0], 400)
+                self.assertIn("password", conf.read_text(encoding="utf-8"))
             finally:
                 httpd.shutdown()
                 httpd.server_close()

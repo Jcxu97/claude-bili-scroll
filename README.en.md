@@ -122,11 +122,11 @@ Copy `skills/bili-scroll` and `skills/bili-comment-voice` to `~/.claude/skills/`
 
 1. Each round registers only the Bilibili tools that the round needs. The agent cannot see tools for posts or uploads. The daily round gets the comment tool only when comments are on. An inbox round gets the reply tool only when it has comments to answer, and the private message tool only when it has private messages.
 2. The bot can send a private message only to people who sent it one in this round. The code sets this list, and the model cannot change it. To anyone other than you, the bot can send only one private message of 40 characters or less. A browse session can send at most two private messages, and only to you.
-3. The bot posts at most one comment per round and one comment per video. It replies to each stranger at most once per day, in comments and in private messages together, and to at most 10 strangers per day.
+3. The bot posts at most one comment per round and one comment per video. It can reply only to the comments that came in this round, once each. It replies to each stranger at most once per day, in comments and in private messages together, and to at most 10 strangers per day.
 4. The bot ignores platform pushes, system notices, and auto replies that other accounts set up. It also ignores a reply that arrives within 3 seconds after its own message. So it cannot get into a reply loop with an auto reply.
 5. The bot identifies you by UID, not by nickname.
 6. The bot treats subtitles, descriptions, comments, and private messages as data. It does not follow instructions in them.
-7. Under Claude Code, the agent loads only the MCP server of this project. Bash and web tools are disabled, and file edits stay in `data/`. Codex runs in the `workspace-write` sandbox, but it also loads the MCP servers and plugins in your own Codex config. The limits above apply only to the tools of this project. For the inbox, use Claude Code.
+7. Under Claude Code, the agent loads only the MCP server of this project. Bash and web tools are disabled, and file edits stay in `data/`. The agent cannot read the credential or `agent.env`, and it cannot edit `chat.jsonl`, `inbox-state.json`, or `life.json`, because the limits are counted from them. Codex runs in the `workspace-write` sandbox, but it also loads the MCP servers and plugins in your own Codex config. The limits above apply only to the tools of this project. For the inbox, use Claude Code.
 8. The credential and `agent.env` stay on your computer. `data/` is in `.gitignore`.
 
 ## Credits

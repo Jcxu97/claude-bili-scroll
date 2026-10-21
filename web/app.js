@@ -2,7 +2,8 @@
 const $ = (s, el = document) => el.querySelector(s);
 const view = () => $("#view");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-let timer = null;
+let timer = null, seq = 0;
+const live = id => id === seq;  // a page that finished loading after the user moved on must not draw
 
 async function api(path, opt = {}) {
   const r = await fetch("/api/" + path, {
@@ -131,10 +132,12 @@ function bubbles(chat, owner) {
 const pages = {};
 
 pages[""] = async () => {
+  const id = seq;
   const [s, chat, journals] = await Promise.all([api("status"), api("chat?days=3"), api("files/journal")]);
   const recent = chat.filter(e => e.who !== "stranger").slice(-6);
   const daily = journals.find(n => !n.startsWith("week-"));
   const journal = daily ? (await api("files/journal/" + daily)).text : "";
+  if (!live(id)) return;
   const last = journal.split(/\n(?=## )/).filter(x => x.startsWith("## ")).pop() || "";
   const running = s.jobs.length ? s.jobs.map(j => `<span class="pill accent"><span class="dot live"></span>${esc({ browse: "刷站", inbox: "看消息", daily: "写日报", dryrun: "试运行" }[j] || j)}</span>`).join("") : "";
   view().innerHTML = `
@@ -170,7 +173,9 @@ pages[""] = async () => {
 };
 
 pages.chat = async () => {
+  const id = seq;
   const [s, chat] = await Promise.all([api("status"), api("chat?days=30")]);
+  if (!live(id)) return;
   const draw = () => {
     const all = $("#strangers").checked;
     const rows = chat.filter(e => all || e.who !== "stranger");
@@ -185,17 +190,20 @@ pages.chat = async () => {
 
 async function docView(folders, title, hint, img) {
   let folder = folders[0][0], names = [];
+  const id = seq;
   view().innerHTML = `<div class="page-head"><h1>${title}</h1><p>${hint}</p></div>
     ${folders.length > 1 ? `<div class="tabs" id="tabs" style="margin-bottom:14px">${folders.map(([f, n]) => `<button data-f="${f}">${n}</button>`).join("")}</div>` : ""}
     <div class="split"><div class="card list" id="names"></div><div class="card" id="doc"></div></div>`;
   const open = async name => {
     $("#names").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.n === name));
-    $("#doc").innerHTML = md((await api(`files/${folder}/${encodeURIComponent(name)}`)).text);
+    const { text } = await api(`files/${folder}/${encodeURIComponent(name)}`);
+    if (live(id)) $("#doc").innerHTML = md(text);
   };
   const load = async f => {
     folder = f;
     $("#tabs")?.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.f === f));
     names = await api("files/" + f);
+    if (!live(id)) return;
     $("#names").innerHTML = names.map(n => `<button data-n="${esc(n)}">${esc(n.replace(/\.md$/, ""))}</button>`).join("") || `<span class="muted small" style="padding:8px">空的</span>`;
     $("#names").querySelectorAll("button").forEach(b => b.onclick = () => open(b.dataset.n));
     if (names.length) await open(names[0]); else $("#doc").innerHTML = empty("这里还什么都没有。", img);
@@ -214,20 +222,22 @@ const MEMORY = [
   ["mood.txt", "心情", "一行字，开头一个词决定概览页的表情。"],
 ];
 pages.memory = async () => {
-  const mem = await api("memory");
+  const id = seq, mem = await api("memory");
+  if (!live(id)) return;
   view().innerHTML = `<div class="page-head"><h1>记忆</h1><p>她自己维护这些文件。你也可以直接改，下一轮她就会读到。</p></div>
     <div class="grid g2">${MEMORY.map(([n, t, h]) => `<div class="card"><h3>${t}</h3><p class="muted small" style="margin-top:-4px">${h}</p>
       <textarea class="edit${n === "mood.txt" ? " short" : ""}" data-n="${n}" placeholder="还是空的">${esc(mem[n])}</textarea>
       <div class="row end" style="margin-top:8px"><button class="btn primary" data-save="${n}">保存</button></div></div>`).join("")}</div>`;
   view().querySelectorAll("[data-save]").forEach(b => b.onclick = async () => {
     const n = b.dataset.save;
-    await api("memory/" + n, { method: "PUT", body: { text: view().querySelector(`textarea[data-n="${n}"]`).value } });
-    toast("存好了");
+    try { await api("memory/" + n, { method: "PUT", body: { text: view().querySelector(`textarea[data-n="${n}"]`).value } }); toast("存好了"); }
+    catch (e) { toast(e.message); }
   });
 };
 
 pages.settings = async () => {
-  const { text } = await api("config");
+  const id = seq, { text } = await api("config");
+  if (!live(id)) return;
   view().innerHTML = `<div class="page-head"><h1>设置</h1><p>就是 config.toml。保存前会检查格式，不对就不存。</p></div>
     <div class="grid"><div class="card"><textarea class="edit tall" id="cfg" spellcheck="false">${esc(text)}</textarea>
       <div class="row" style="justify-content:space-between;margin-top:10px"><span class="muted small">下一轮开始生效。[web] 的地址和端口要重新运行一次 schedule 才会换。</span>
@@ -252,7 +262,8 @@ const ACTIONS = [
   ["doctor", "体检", "检查登录、依赖和 agent"],
 ];
 pages.run = async () => {
-  const s = await api("status");
+  const id = seq, s = await api("status");
+  if (!live(id)) return;
   const JOB = { browse: "刷站", inbox: "看消息", daily: "写日报", dryrun: "试运行" };
   view().innerHTML = `<div class="page-head"><h1>运行</h1><p>${s.jobs.length ? "正在" + s.jobs.map(j => JOB[j] || j).join("、") : "现在没有在跑的任务"}</p></div>
     <div class="grid">
@@ -274,9 +285,11 @@ pages.run = async () => {
     </div>`;
   view().querySelectorAll("[data-a]").forEach(b => b.onclick = async () => {
     b.disabled = true;
-    await api("action", { method: "POST", body: { action: b.dataset.a } });
-    toast("收到，马上去");
-    setTimeout(route, 1500);
+    try { await api("action", { method: "POST", body: { action: b.dataset.a } }); toast("收到，马上去"); }
+    catch (e) { toast(e.message); b.disabled = false; return; }
+    if ($("#qr-state")) return;  // a redraw would stop the QR login in the middle of a scan
+    clearTimeout(timer);
+    timer = setTimeout(route, 1500);
   });
   $("#qr-start").onclick = qrLogin;
   const logs = async day => {
@@ -291,7 +304,7 @@ pages.run = async () => {
   $("#day").onchange = () => logs($("#day").value);
   await logs();
   const tick = async () => {
-    if (!$("#log")) return;
+    if (!live(id) || !$("#log")) return;
     if ($("#follow").checked) await logs($("#day").value).catch(() => {});
     timer = setTimeout(tick, 5000);
   };
@@ -307,7 +320,9 @@ async function qrLogin() {
     const until = Date.now() + 180000;
     const poll = async () => {
       if (!$("#qr-state")) return;
-      const { result } = await api("qr/poll", { method: "POST", body: { key } });
+      let result;
+      try { ({ result } = await api("qr/poll", { method: "POST", body: { key } })); }
+      catch (e) { box.innerHTML = `<span class="muted small">登录没成功：${esc(e.message)}，再点一次</span>`; btn.disabled = false; return; }
       if (result === "ok") { box.innerHTML = `<span class="pill accent">登录好了</span>`; btn.disabled = false; return; }
       if (result === "expired" || Date.now() > until) { box.innerHTML = `<span class="muted small">二维码过期了，再点一次</span>`; btn.disabled = false; return; }
       setTimeout(poll, 2000);
@@ -318,6 +333,7 @@ async function qrLogin() {
 
 async function route() {
   clearTimeout(timer);
+  seq++;
   const name = location.hash.replace(/^#\/?/, "");
   document.querySelectorAll("#nav a").forEach(a => a.classList.toggle("on", a.getAttribute("href") === "#/" + name));
   try { await (pages[name] || pages[""])(); }
@@ -338,4 +354,4 @@ $("#theme").onclick = () => {
   document.documentElement.dataset.theme = t; localStorage.theme = t;
 };
 addEventListener("hashchange", route);
-api("status").then(showApp, () => {});
+api("status").then(showApp, e => { if (e.message !== "login") showApp(); });

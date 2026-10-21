@@ -13,7 +13,7 @@ import time
 import tomllib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 STATIC = Path(__file__).resolve().parent / "web"
 TYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
@@ -24,11 +24,42 @@ NAME = re.compile(r"^[\w.-]+\.md$")
 DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
+def check_config(text, app):
+    """Refuse a config that would stop serve: it rereads the file every minute and every job reads it too."""
+    data = tomllib.loads(text)
+    for k, v in data.items():
+        if not isinstance(v, dict):
+            raise ValueError(f"{k} 要写在某个 [小节] 下面")
+    lf, w = data.get("life", {}), data.get("web", {})
+    for k in ("wake", "sleep"):
+        if k in lf:
+            app.life.minutes(lf[k])
+    if "owner_quiet" in lf:
+        q = lf["owner_quiet"]
+        if not isinstance(q, list) or len(q) != 2:
+            raise ValueError('owner_quiet 要写成 ["01:00", "09:00"] 这样')
+        for x in q:
+            app.life.minutes(x)
+    for k in ("weekend_shift", "max_contacts_per_day", "min_gap_minutes"):
+        if k in lf:
+            int(lf[k])
+    if "port" in w and not 0 < int(w["port"]) < 65536:
+        raise ValueError("port 要在 1 到 65535 之间")
+
+
 def start(srv, app, web_cfg):
-    sessions, fails = {}, []
+    sessions, fails = {}, {}
     ws = srv.ws
+    port = int(web_cfg["port"])
+    # A page on another site can point its own name at this address (DNS rebinding). Accept our names only.
+    hosts = set()
+
+    def password():
+        return str(app.load_config(srv.config)["web"]["password"])
 
     class Handler(BaseHTTPRequestHandler):
+        timeout = 30
+
         def log_message(self, *args):
             pass
 
@@ -48,10 +79,12 @@ def start(srv, app, web_cfg):
 
         def authed(self):
             m = re.search(r"(?:^|;\s*)cbs=([\w-]+)", self.headers.get("Cookie", ""))
-            return bool(m) and sessions.get(m.group(1), 0) > time.time()
+            got = sessions.get(m.group(1)) if m else None
+            # A new password logs out every old session.
+            return bool(got) and got[0] > time.time() and hmac.compare_digest(got[1], password())
 
         def body(self):
-            n = int(self.headers.get("Content-Length") or 0)
+            n = max(0, int(self.headers.get("Content-Length") or 0))
             return self.rfile.read(min(n, 1 << 20)).decode("utf-8") if n else ""
 
         def do_GET(self):
@@ -66,6 +99,8 @@ def start(srv, app, web_cfg):
         def route(self, method):
             url = urlparse(self.path)
             path, q = url.path, parse_qs(url.query)
+            if self.headers.get("Host") not in hosts:
+                return self.send(403, {"error": "host"})
             try:
                 if not path.startswith("/api/"):
                     return self.static(path) if method == "GET" else self.send(405, {"error": "method"})
@@ -88,22 +123,22 @@ def start(srv, app, web_cfg):
             self.send(200, f.read_bytes(), TYPES[f.suffix])
 
         def login(self):
-            now = time.time()
-            fails[:] = [t for t in fails if now - t < 600]
-            if len(fails) >= 5:
+            now, ip = time.time(), self.client_address[0]
+            mine = fails[ip] = [t for t in fails.get(ip, []) if now - t < 600]
+            if len(mine) >= 5:
                 return self.send(429, {"error": "试错太多次了，十分钟后再来"})
             given = str((json.loads(self.body() or "{}")).get("password", ""))
-            password = app.load_config(srv.config)["web"]["password"]
-            if not password or not hmac.compare_digest(given.encode("utf-8"), str(password).encode("utf-8")):
-                fails.append(now)
+            pw = password()
+            if not pw or not hmac.compare_digest(given.encode("utf-8"), pw.encode("utf-8")):
+                mine.append(now)
                 return self.send(403, {"error": "密码不对"})
             token = secrets.token_urlsafe(32)
-            sessions[token] = now + 30 * 86400
+            sessions[token] = (now + 30 * 86400, pw)
             self.send(200, {"ok": True}, headers=[(
                 "Set-Cookie", f"cbs={token}; Path=/; Max-Age={30 * 86400}; HttpOnly; SameSite=Strict")])
 
         def api(self, method, path, q):
-            parts = path.split("/")[2:]
+            parts = [unquote(x) for x in path.split("/")[2:]]
             if path == "/api/logout" and method == "POST":
                 m = re.search(r"(?:^|;\s*)cbs=([\w-]+)", self.headers.get("Cookie", ""))
                 sessions.pop(m.group(1) if m else "", None)
@@ -116,7 +151,7 @@ def start(srv, app, web_cfg):
             if parts[0] == "files" and len(parts) in (2, 3) and parts[1] in FOLDERS:
                 folder = ws / parts[1]
                 if len(parts) == 2:
-                    names = sorted((p.name for p in folder.glob("*.md")), reverse=True) if folder.exists() else []
+                    names = sorted((p.name for p in folder.glob("*.md") if NAME.match(p.name)), reverse=True)
                     return self.send(200, names)
                 if not NAME.match(parts[2]) or not (folder / parts[2]).is_file():
                     return self.send(404, {"error": "没有这个文件"})
@@ -137,9 +172,9 @@ def start(srv, app, web_cfg):
                 if method == "PUT":
                     text = json.loads(self.body())["text"]
                     try:
-                        tomllib.loads(text)
-                    except tomllib.TOMLDecodeError as e:
-                        return self.send(400, {"error": f"格式不对，没有保存：{e}"})
+                        check_config(text, app)
+                    except (tomllib.TOMLDecodeError, ValueError, TypeError) as e:
+                        return self.send(400, {"error": f"没有保存：{e}"})
                     write_text(cfg_file, text)
                     return self.send(200, {"ok": True})
             if path == "/api/logs":
@@ -166,7 +201,9 @@ def start(srv, app, web_cfg):
                 return self.send(200, {"result": app.login_poll(app.load_config(srv.config), key)})
             return self.send(404, {"error": "没有这个接口"})
 
-    httpd = ThreadingHTTPServer((web_cfg["host"], int(web_cfg["port"])), Handler)
+    httpd = ThreadingHTTPServer((web_cfg["host"], port), Handler)
+    port = httpd.server_address[1]
+    hosts.update(f"{h}:{port}" for h in (web_cfg["host"], "localhost", "127.0.0.1"))
     httpd.daemon_threads = True
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return httpd
