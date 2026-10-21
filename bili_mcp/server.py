@@ -21,12 +21,17 @@ B站数据采集 MCP 服务，支持 OpenClaw / Claude Code / Cursor / Cline
 #      ⑨ 新增 `bili_frames`：用进度条预览图切出带时间点的截图，给能看图的 agent 看画面
 #      ⑩ `bili_send_message` 认环境变量 BILI_DM_TO：给了这个变量，就只能发给名单里的 UID。
 #         再给了 BILI_DM_OWNER（主号 UID），发给别人的私信每人只能一条，40 字以内
+#      ⑪ BILI_DM_MAX / BILI_REPLY_MAX 限制一个进程最多发几条私信、几条新评论；BILI_DM_KIND 是
+#         proactive 或 nudge（主动找主号）时，私信有长度上限，也不许带指责和逼回复的话
+#      ⑫ 发出去的私信和评论回复写进 BILI_CHAT_LOG（chat.jsonl），宿主靠它算主动联系的次数
+#      ⑬ 新增 `bili_favorite_add`：把视频收进 BILI_FAV_TITLE 这个收藏夹，没有就新建
 import asyncio
 import json
 import base64
 import os
 import sys
 import tempfile
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
@@ -59,6 +64,24 @@ def tool():
             return fn
         return mcp.tool()(fn)
     return deco
+
+
+_SENT = {"dm": 0, "reply": 0}
+# A proactive message is there to share, not to make the owner feel guilty. These are refused in code.
+_PUSHY = ("为什么不回", "怎么还不回", "再不回", "必须回", "快回我", "不在乎我", "你根本", "拉黑", "不理你了",
+          "后果自负", "等着瞧", "最后一次")
+
+
+def _over(env_name, key):
+    cap = os.environ.get(env_name, "")
+    return cap.isdigit() and _SENT[key] >= int(cap)
+
+
+def _chat_log(entry):
+    path = os.environ.get("BILI_CHAT_LOG")
+    if path:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(dict({"t": int(time.time())}, **entry), ensure_ascii=False) + "\n")
 
 
 def load_credential() -> Credential:
@@ -590,6 +613,8 @@ async def bili_reply(bvid: str, text: str, rpid: int = 0, root: int = 0) -> str:
     Returns:
         发表结果
     """
+    if rpid == 0 and _over("BILI_REPLY_MAX", "reply"):
+        return json.dumps({"success": False, "error": "这一轮不能再发新评论了"}, ensure_ascii=False)
     cred = get_cred()
     v = video.Video(bvid=bvid, credential=cred)
     info = await v.get_info()
@@ -597,6 +622,7 @@ async def bili_reply(bvid: str, text: str, rpid: int = 0, root: int = 0) -> str:
 
     try:
         if rpid == 0:
+            _SENT["reply"] += 1  # counted before sending: a timeout can still have posted it
             # 发表新评论
             result = await comment.send_comment(
                 text=text,
@@ -627,6 +653,9 @@ async def bili_reply(bvid: str, text: str, rpid: int = 0, root: int = 0) -> str:
                 val = result.get(key)
                 if isinstance(val, (int, str)) and str(val).strip() and str(val) != "0":
                     out[key] = val
+        _chat_log({"who": "bot", "channel": "comment", "kind": "comment", "bvid": bvid, "title": info.get("title", ""),
+                   "text": text, "rpid": out.get("rpid", 0), "reply_to": rpid,
+                   "session": os.environ.get("BILI_SESSION", "")})
         return json.dumps(out, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
@@ -1420,12 +1449,22 @@ async def bili_send_message(receiver_uid: int, text: str) -> str:
     if os.environ.get("BILI_DM_OWNER", str(receiver_uid)) != str(receiver_uid) and (
             len(text or "") > 40 or receiver_uid in _DM_SENT):
         return json.dumps({"success": False, "error": "给主号以外的人只能回一条，40 字以内"}, ensure_ascii=False)
+    if _over("BILI_DM_MAX", "dm"):
+        return json.dumps({"success": False, "error": "这一轮的私信已经发够了"}, ensure_ascii=False)
+    kind = os.environ.get("BILI_DM_KIND") or "reply"
+    if kind in ("proactive", "nudge"):
+        if len(text or "") > (60 if kind == "nudge" else 150):
+            return json.dumps({"success": False, "error": "主动找主号的私信太长了，说短一点"}, ensure_ascii=False)
+        if any(w in (text or "") for w in _PUSHY):
+            return json.dumps({"success": False, "error": "不要指责主号，也不要逼主号回复，换个说法"},
+                              ensure_ascii=False)
     cred = get_cred()
 
     if not text or not text.strip():
         return json.dumps({"success": False, "error": "text 不能为空"}, ensure_ascii=False)
 
     try:
+        _SENT["dm"] += 1
         result = await session.send_msg(
             credential=cred,
             receiver_id=receiver_uid,
@@ -1433,6 +1472,8 @@ async def bili_send_message(receiver_uid: int, text: str) -> str:
             content=text.strip(),
         )
         _DM_SENT.add(receiver_uid)
+        _chat_log({"who": "bot", "channel": "dm", "to": receiver_uid, "text": text.strip(), "kind": kind,
+                   "session": os.environ.get("BILI_SESSION", "")})
         return json.dumps({
             "success": True,
             "message": f"私信已发送给UID:{receiver_uid}",
@@ -1440,6 +1481,36 @@ async def bili_send_message(receiver_uid: int, text: str) -> str:
         }, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
+
+
+_FAV_ID = []
+
+
+@tool()
+async def bili_favorite_add(bvid: str) -> str:
+    """
+    把视频收进留给主号看的收藏夹（夹子名由宿主定，没有就新建一个公开的）
+
+    Args:
+        bvid: 视频BV号
+
+    Returns:
+        收藏结果
+    """
+    title = os.environ.get("BILI_FAV_TITLE") or "给主号的"
+    cred = get_cred()
+    try:
+        if not _FAV_ID:
+            lists = await favorite_list.get_video_favorite_list(int(cred.dedeuserid), credential=cred)
+            found = [x["id"] for x in (lists or {}).get("list") or [] if x.get("title") == title]
+            if not found:
+                made = await favorite_list.create_video_favorite_list(title, credential=cred)
+                found = [made["id"]]
+            _FAV_ID.append(found[0])
+        await video.Video(bvid=bvid, credential=cred).set_favorite(add_media_ids=[_FAV_ID[0]])
+        return json.dumps({"success": True, "folder": title, "bvid": bvid}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"success": False, "error": f"{type(e).__name__}: {e}"}, ensure_ascii=False)
 
 
 # ========== Tool 22: 未读消息 ==========

@@ -22,6 +22,25 @@ Claude Code · Codex · any agent that supports MCP
 4. Answers in private messages. Send the bot a video link, a BV id, or share the video to it from the app. It reads the video and replies to you in private. If you ask what it found today, it reads the daily report.
 5. A short brush-off for other people, in comments and in private messages. The bot replies only to you.
 
+## Daily routine mode
+
+Set `[life] enabled = true` (the default in a new config). The bot then lives like a person and does not run one fixed round per day.
+
+1. It wakes up at about 9:30 and goes to sleep at about 1:00. Each day the times move by up to one hour. On weekends it gets up later. A few random busy blocks fill the day.
+2. When it is awake and free, it browses for a while. Most sessions are short, about ten minutes. Some sessions go on for 30 to 60 minutes. After each session it writes a journal entry. On Sunday evening it writes a weekly recap.
+3. When it finds a video that you will probably like, it sends you a private message about it. It does not message you after every session.
+4. Its reply speed changes with its state. When it is free, it replies in a few minutes. When it browses, it replies in 10 to 20 minutes. When it is busy, it replies in about half an hour. When it is asleep, it replies after it wakes up.
+5. It keeps notes in `data/memory/`: what you like, important dates, videos that you want to watch later, open topics, its own interests, and its mood.
+6. It can search for videos for you and add videos to a favorites folder on the bot account.
+
+The code limits proactive messages. The bot contacts you at most 10 times per day, with at least 45 minutes between contacts. After two contacts without an answer, it sends one gentle message and then waits for you. It does not contact you during your sleep hours (1:00 to 9:00 by default). The code refuses proactive messages that are too long or that blame you or push you to reply. Change these values in `[life]`.
+
+## Web dashboard
+
+Set `password` in `[web]`, and `serve` also starts a web dashboard. The dashboard has no external dependencies and works on a phone. It shows the bot's state, mood, and day plan, the chat history, the journal, reports, and memory. You can edit the config and the memory files, start a session or a message check, pause the bot, read the logs, and log in again with a QR code.
+
+The default `host` is `127.0.0.1`, so only this machine can open the dashboard. To open it over Tailscale, set `host` to the Tailscale IP of this machine and allow the port in the firewall. Run `schedule` again after you change `host` or `port`. Do not use a public address.
+
 ## How it picks videos
 
 1. It takes candidates from the official "Weekly Must-Watch" list and from your keywords.
@@ -66,11 +85,12 @@ Background jobs do not see variables that you set only in your terminal. `instal
 | `run.py login` | Log in the bot account with a QR code. The credential stays in `data/credential.json`. |
 | `run.py doctor` | Check Python, packages, the login, and the agent CLI. Make one real call to the agent. |
 | `run.py once` | Run one round. Pick videos, write the report, post the comment if enabled, check that the comment is public. |
+| `run.py browse` | Browse for a while in daily routine mode, write the journal, maybe message you. `--style long` makes a longer session. |
 | `run.py inbox` | Answer new mentions, replies, and private messages. Exit without a model call when there is nothing new. |
-| `run.py serve` | Keep running. If the inbox is on, run `inbox` every 5 minutes. Run `once` once a day after 12:00. If no report comes out, try again one hour later. |
+| `run.py serve` | Keep running. In daily routine mode, run `browse` and `inbox` on the routine, and serve the dashboard if `[web] password` is set. Without the routine: if the inbox is on, run `inbox` every 5 minutes. Run `once` once a day after 12:00. If no report comes out, try again one hour later. |
 | `run.py schedule` | Start `serve` in the background at boot, with no window. Task Scheduler on Windows, crontab on macOS and Linux. `--remove` stops it and deletes the job. |
 
-`once` and `inbox` accept `--dry-run`. `--data DIR` writes the output to a different folder. While the bot runs in the background, always use `--data` for a trial. If you do not, the trial writes today's report, and the bot skips the real round for that day. `install`, `serve`, and `schedule` accept `--at 08:30` (the daily round starts after this time) and `--every 5` (minutes between message checks).
+`once`, `browse`, and `inbox` accept `--dry-run`. `--data DIR` writes the output to a different folder. While the bot runs in the background, always use `--data` for a trial. If you do not, the trial writes today's report, and the bot skips the real round for that day. `install`, `serve`, and `schedule` accept `--at 08:30` (the daily round starts after this time) and `--every 5` (minutes between message checks).
 
 ## Agents
 
@@ -101,7 +121,7 @@ Copy `skills/bili-scroll` and `skills/bili-comment-voice` to `~/.claude/skills/`
 ## Safety
 
 1. Each round registers only the Bilibili tools that the round needs. The agent cannot see tools for posts or uploads. The daily round gets the comment tool only when comments are on. An inbox round gets the reply tool only when it has comments to answer, and the private message tool only when it has private messages.
-2. The bot can send a private message only to people who sent it one in this round. The code sets this list, and the model cannot change it. To anyone other than you, the bot can send only one private message of 40 characters or less.
+2. The bot can send a private message only to people who sent it one in this round. The code sets this list, and the model cannot change it. To anyone other than you, the bot can send only one private message of 40 characters or less. A browse session can send at most two private messages, and only to you.
 3. The bot posts at most one comment per round and one comment per video. It replies to each stranger at most once per day, in comments and in private messages together, and to at most 10 strangers per day.
 4. The bot ignores platform pushes, system notices, and auto replies that other accounts set up. It also ignores a reply that arrives within 3 seconds after its own message. So it cannot get into a reply loop with an auto reply.
 5. The bot identifies you by UID, not by nickname.

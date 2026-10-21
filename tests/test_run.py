@@ -1,11 +1,17 @@
+import http.client
 import json
+import random
 import sys
 import tempfile
 import unittest
+from datetime import date, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import life  # noqa: E402
 import run  # noqa: E402
+import web  # noqa: E402
 
 
 def cfg(**over):
@@ -104,6 +110,70 @@ class VerifyTest(unittest.TestCase):
         seen = "- 看过 2026-01-01 BV1xx411c7mD 标题\n- 评论 2026-01-01 BV1xx411c7mD rpid=317681254737 正文\n" \
                "- 评论 2026-01-01 BV1yy411c7mD rpid=未取到 正文\n"
         self.assertEqual(run.comment_rows(seen, "2026-01-01"), [("BV1xx411c7mD", "317681254737")])
+
+
+def at(day, hh, mm=0):
+    return datetime(2026, 10, day, hh, mm).timestamp()
+
+
+class LifeTest(unittest.TestCase):
+    def test_plan_and_state(self):
+        plan = life.plan_day(date(2026, 10, 21), cfg()["life"], random.Random(1))  # a Wednesday
+        self.assertTrue(at(21, 8, 30) <= plan["wake"] <= at(21, 10, 30))
+        self.assertTrue(at(22, 0) <= plan["sleep"] <= at(22, 2))
+        for start, end, _ in plan["busy"]:
+            self.assertTrue(plan["wake"] < start < end < plan["sleep"])
+        self.assertEqual(life.state(plan, at(22, 4)), ("asleep", ""))
+        state = {}
+        self.assertEqual(life.current_plan(state, cfg()["life"], at(22, 0, 30), random.Random(1))["date"], "2026-10-21")
+        self.assertEqual(state["next_inbox"], state["plan"]["wake"])
+
+    def test_proactive_caps_nudge_once_and_quiet_hours(self):
+        c = cfg()["life"]
+
+        def bot(t, s, kind="proactive"):
+            return {"t": t, "who": "bot", "kind": kind, "session": s}
+        owner = {"t": at(21, 12), "who": "owner"}
+        self.assertEqual(life.proactive([owner], c, at(21, 14))[0], "share")
+        self.assertIsNone(life.proactive([owner], c, at(21, 3))[0])
+        chat = [owner, bot(at(21, 12, 30), "a"), bot(at(21, 13), "b")]
+        self.assertIsNone(life.proactive(chat, c, at(21, 13, 20))[0])  # 45 minutes apart
+        self.assertEqual(life.proactive(chat, c, at(21, 14))[0], "nudge")
+        chat.append(bot(at(21, 14), "c", "nudge"))
+        self.assertIsNone(life.proactive(chat, c, at(21, 16))[0])
+        chat.append({"t": at(21, 16, 10), "who": "owner"})
+        self.assertEqual(life.proactive(chat, c, at(21, 17))[0], "share")
+        full = [bot(at(21, 10) + i * 60, str(i)) for i in range(10)] + [{"t": at(21, 11), "who": "owner"}]
+        self.assertIsNone(life.proactive(full, c, at(21, 20))[0])
+
+
+class WebTest(unittest.TestCase):
+    def test_login_header_and_paths(self):
+        with tempfile.TemporaryDirectory() as d:
+            conf = Path(d) / "config.toml"
+            conf.write_text('[web]\npassword = "pw"\n', encoding="utf-8")
+            srv = SimpleNamespace(ws=Path(d), config=str(conf), snapshot=lambda: {"state": "awake"})
+            httpd = web.start(srv, run, {"host": "127.0.0.1", "port": 0})
+            port = httpd.server_address[1]
+
+            def call(method, path, body=None, headers=None):
+                h = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+                h.request(method, path, json.dumps(body) if body is not None else None, headers or {})
+                r = h.getresponse()
+                return r.status, r.getheader("Set-Cookie") or "", r.read()
+            try:
+                self.assertEqual(call("GET", "/api/status")[0], 401)
+                self.assertEqual(call("POST", "/api/login", {"password": "pw"})[0], 403)
+                self.assertEqual(call("POST", "/api/login", {"password": "no"}, {"X-CBS": "1"})[0], 403)
+                code, cookie, _ = call("POST", "/api/login", {"password": "pw"}, {"X-CBS": "1"})
+                self.assertEqual(code, 200)
+                auth = {"Cookie": cookie.split(";")[0]}
+                self.assertEqual(call("GET", "/api/status", headers=auth)[0], 200)
+                self.assertEqual(call("GET", "/api/files/journal/..%2Fconfig.toml", headers=auth)[0], 404)
+                self.assertEqual(call("GET", "/../config.toml")[0], 404)
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
 
 
 if __name__ == "__main__":

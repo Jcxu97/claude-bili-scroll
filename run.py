@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""claude-bili-scroll: let your AI agent scroll Bilibili for you once a day.
+"""claude-bili-scroll: let your AI agent scroll Bilibili for you and keep you company.
 
 Commands:
   install   set up .venv, log in, check everything, then run schedule (one command for a new machine)
@@ -7,7 +7,8 @@ Commands:
   doctor    check Python, login, the agent CLI, and one real agent call
   once      run one daily round: pick videos, write the report, maybe comment
   inbox     answer new @ mentions, replies and private messages (exits early when there is nothing new)
-  serve     stay running: check the inbox every few minutes, run the daily round once a day
+  browse    browse for a while, keep a journal, maybe share a video with the owner
+  serve     stay running: browse and check messages on a daily routine, and serve the web page
   schedule  start serve at logon and keep it alive (Task Scheduler on Windows, crontab elsewhere)
 """
 import argparse
@@ -19,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -28,6 +30,8 @@ from pathlib import Path
 if sys.version_info < (3, 11):
     sys.exit(f"需要 Python 3.11 以上，当前是 {sys.version.split()[0]}")
 import tomllib  # noqa: E402
+
+import life  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
 SERVER = ROOT / "bili_mcp" / "server.py"
@@ -42,9 +46,14 @@ DEFAULTS = {
     "inbox": {"enabled": False, "owner_uid": 0, "max_stranger_replies_per_day": 10},
     "persona": {"file": "personas/neutral.md"},
     "paths": {"data": "data"},
+    "life": {"enabled": False, "wake": "09:30", "sleep": "01:00", "weekend_shift": 60, "owner_quiet": ["01:00", "09:00"],
+             "max_contacts_per_day": 10, "min_gap_minutes": 45, "favorites": "给主号的", "daily_report": False},
+    "web": {"host": "127.0.0.1", "port": 8788, "password": ""},
 }
 SCROLL_TOOLS = ["bili_search", "bili_weekly_hot", "bili_subtitle", "bili_comments", "bili_video_info", "bili_check_credential"]
-INBOX_TOOLS = ["bili_subtitle", "bili_danmaku", "bili_frames", "bili_comments", "bili_video_info", "bili_check_credential"]
+INBOX_TOOLS = ["bili_search", "bili_subtitle", "bili_danmaku", "bili_frames", "bili_comments", "bili_video_info",
+               "bili_check_credential", "bili_favorite_add"]
+BROWSE_TOOLS = SCROLL_TOOLS + ["bili_danmaku", "bili_frames", "bili_favorite_add"]
 CLAUDE_FILE_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep"]
 
 
@@ -85,46 +94,74 @@ def owner_name(cfg):
     return cfg["comment"]["at"] or "主人"
 
 
-def build_prompt(cfg, task, dry_run, messages=None):
-    """Return (prompt, tools). The persona and the voice skill are appended to every task."""
+def build_prompt(cfg, task, dry_run, messages=None, ctx=None):
+    """Return (prompt, tools). The persona and the voice skill are appended to every task.
+
+    ctx can add "params" (lines for the parameter list), "parts" (whole sections) and "tools".
+    """
+    ctx = ctx or {}
     persona = read_md(resolve(cfg["persona"]["file"])).replace("{owner}", owner_name(cfg))
     parts = [read_md(ROOT / "prompts" / f"{task}.md"), persona,
              read_md(ROOT / "skills" / "bili-comment-voice" / "SKILL.md")]
-    today = date.today().isoformat()
-    params = [f"1. 今天：{today}"]
+    params = [f"今天：{date.today().isoformat()}，星期{'一二三四五六日'[date.today().weekday()]}"]
+    tools = []
     if task == "scroll":
         s, c = cfg["scroll"], cfg["comment"]
         tools = list(SCROLL_TOOLS)
         comment_on = c["enabled"] and c["at"] and not dry_run
-        params += [f"2. 关键词：{'、'.join(s['keywords'])}",
-                   f"3. 每周必看：{'开' if s['weekly_hot'] else '关'}",
-                   f"4. 播放量门槛：{s['min_play']}，只看近 {s['days']} 天发布的",
-                   f"5. 每天最多挑 {s['max_picks']} 条",
-                   f"6. 评论：{'开' if comment_on else '关'}，主号昵称 {c['at'] or '未设置'}，每轮最多 {c['max_per_run']} 条"]
+        params += [f"关键词：{'、'.join(s['keywords'])}",
+                   f"每周必看：{'开' if s['weekly_hot'] else '关'}",
+                   f"播放量门槛：{s['min_play']}，只看近 {s['days']} 天发布的",
+                   f"每天最多挑 {s['max_picks']} 条",
+                   f"评论：{'开' if comment_on else '关'}，主号昵称 {c['at'] or '未设置'}，每轮最多 {c['max_per_run']} 条"]
         if comment_on:
             tools.append("bili_reply")
-    else:
+    elif task == "inbox":
         channels = {m.get("channel", "comment") for m in messages or []}
         tools = list(INBOX_TOOLS)
         if not dry_run:
             tools += [t for ch, t in (("comment", "bili_reply"), ("dm", "bili_send_message")) if ch in channels]
-        params.append(f"2. 主号昵称：{owner_name(cfg)}")
+        params.append(f"主号昵称：{owner_name(cfg)}")
         parts.append("## 消息\n\n```json\n" + json.dumps(messages or [], ensure_ascii=False, indent=1) + "\n```")
+    tools += [t for t in ctx.get("tools", []) if t not in tools]
+    params += ctx.get("params", [])
+    parts += ctx.get("parts", [])
     if dry_run:
-        params.append(f"{len(params) + 1}. 试运行：不发评论，不发回复，把拟好的内容写进记录。")
-    params.append(f"{len(params) + 1}. 工作目录就是当前目录，所有文件都写在这里。")
-    parts.append("## 这一轮的参数\n\n" + "\n".join(params))
+        params.append("试运行：不发评论，不发私信，不收藏，把拟好的内容写进记录，记忆文件也不要改。")
+    params.append("工作目录就是当前目录，所有文件都写在这里。")
+    parts.append("## 这一轮的参数\n\n" + "\n".join(f"{i}. {p}" for i, p in enumerate(params, 1)))
     return "\n\n".join(parts) + "\n", tools
 
 
-def mcp_server_spec(cfg, tools, workspace, dm_to=()):
+MEMORY_FILES = ("owner.md", "topics.md", "interests.md", "mood.txt")
+
+
+def memory_part(workspace):
+    out = []
+    for name in MEMORY_FILES:
+        p = workspace / "memory" / name
+        text = p.read_text(encoding="utf-8").strip() if p.exists() else ""
+        out.append(f"### memory/{name}\n\n{text[-3000:] or '（还是空的）'}")
+    return "## 你的记忆（工作目录下的 memory/，按 prompt 里写的规则自己维护）\n\n" + "\n\n".join(out)
+
+
+def chat_part(chat, cfg, n=20):
+    names = {"owner": owner_name(cfg), "bot": "你"}
+    lines = [f"{datetime.fromtimestamp(e['t']):%m-%d %H:%M} {names.get(e.get('who')) or e.get('from') or '陌生人'}"
+             f"（{'私信' if e.get('channel') == 'dm' else '评论'}）：{str(e.get('text', ''))[:150]}" for e in chat[-n:]]
+    return "## 最近的聊天（旧的在上面）\n\n" + ("\n".join(lines) or "（还没有）")
+
+
+def mcp_server_spec(cfg, tools, workspace, dm_to=(), extra=None):
     return {"command": sys.executable, "args": ["-I", str(SERVER)],
             "env": {"BILI_MCP_TOOLS": ",".join(tools), "BILI_CREDENTIAL_FILE": str(cred_file(cfg)),
                     "BILI_FRAMES_DIR": str(workspace), "BILI_DM_TO": ",".join(map(str, dm_to)),
-                    "BILI_DM_OWNER": str(int(cfg["inbox"]["owner_uid"] or 0)), "PYTHONIOENCODING": "utf-8"}}
+                    "BILI_DM_OWNER": str(int(cfg["inbox"]["owner_uid"] or 0)), "PYTHONIOENCODING": "utf-8",
+                    "BILI_CHAT_LOG": str(workspace / "chat.jsonl"), "BILI_FAV_TITLE": cfg["life"]["favorites"],
+                    **(extra or {})}}
 
 
-def agent_command(cfg, workspace, mcp_json, prompt_file, tools, dm_to=()):
+def agent_command(cfg, workspace, mcp_json, prompt_file, tools, dm_to=(), extra=None):
     a = cfg["agent"]
     name, model, effort = a["name"], a.get("model", ""), a.get("effort", "")
     if name == "claude":
@@ -136,7 +173,7 @@ def agent_command(cfg, workspace, mcp_json, prompt_file, tools, dm_to=()):
         cmd += ["--effort", effort] if effort else []
         return cmd
     if name == "codex":
-        spec = mcp_server_spec(cfg, tools, workspace, dm_to)
+        spec = mcp_server_spec(cfg, tools, workspace, dm_to, extra)
         env = "{" + ",".join(f"{k}={json.dumps(v)}" for k, v in spec["env"].items()) + "}"
         cmd = ["codex", "exec", "--skip-git-repo-check", "-s", "workspace-write", "-C", str(workspace),
                "-c", f"mcp_servers.bili.command={json.dumps(spec['command'])}",
@@ -154,17 +191,19 @@ def agent_command(cfg, workspace, mcp_json, prompt_file, tools, dm_to=()):
     sys.exit(f"不认识的 agent：{name}（可选 claude / codex / custom）")
 
 
-def run_agent(cfg, workspace, task, dry_run, messages=None):
-    prompt, tools = build_prompt(cfg, task, dry_run, messages)
-    dm_to = sorted({m["mid"] for m in messages or [] if m.get("channel") == "dm"})
+def run_agent(cfg, workspace, task, dry_run, messages=None, ctx=None, extra=None, dm_to=None):
+    prompt, tools = build_prompt(cfg, task, dry_run, messages, ctx)
+    if dm_to is None:
+        dm_to = sorted({m["mid"] for m in messages or [] if m.get("channel") == "dm"})
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "logs").mkdir(exist_ok=True)
     prompt_file = workspace / f".prompt-{task}.md"
     prompt_file.write_text(prompt, encoding="utf-8")
-    mcp_json = workspace / ".mcp.json"
-    spec = mcp_server_spec(cfg, tools, workspace, dm_to)
+    # Each task gets its own file: a browse round and an inbox check can run at the same time.
+    mcp_json = workspace / f".mcp-{task}.json"
+    spec = mcp_server_spec(cfg, tools, workspace, dm_to, extra)
     mcp_json.write_text(json.dumps({"mcpServers": {"bili": spec}}, indent=2), encoding="utf-8")
-    cmd = agent_command(cfg, workspace, mcp_json, prompt_file, tools, dm_to)
+    cmd = agent_command(cfg, workspace, mcp_json, prompt_file, tools, dm_to, extra)
     exe = shutil.which(cmd[0])
     if not exe:
         sys.exit(f"找不到 {cmd[0]}。先装好这个 agent 的命令行工具，并确认它在 PATH 里。")
@@ -194,17 +233,46 @@ def guest_cookie():
     return "buvid3=" + http_json("https://api.bilibili.com/x/frontend/finger/spi")[0]["data"]["b_3"]
 
 
+QR_API = "https://passport.bilibili.com/x/passport-login/web/qrcode/"
+
+
+def login_start():
+    """Return (url to put in the QR code, key to poll with)."""
+    d = http_json(QR_API + "generate?source=main-fe-header")[0]["data"]
+    return d["url"], d["qrcode_key"]
+
+
+def login_poll(cfg, key):
+    """Return "ok" (credential saved), "expired" or "wait"."""
+    from http.cookies import SimpleCookie
+    body, cookies = http_json(QR_API + f"poll?qrcode_key={key}&source=main-fe-header")
+    code = body["data"]["code"]
+    if code == 86038:
+        return "expired"
+    if code != 0:
+        return "wait"
+    # bilibili_api's QrCodeLogin reads SESSDATA from data.url, which is empty now. It is in Set-Cookie.
+    jar = SimpleCookie()
+    for c in cookies:
+        jar.load(c)
+    cred = {"sessdata": jar["SESSDATA"].value, "bili_jct": jar["bili_jct"].value,
+            "dedeuserid": jar["DedeUserID"].value, "buvid3": guest_cookie().split("=", 1)[1]}
+    cred_file(cfg).parent.mkdir(parents=True, exist_ok=True)
+    tmp = cred_file(cfg).with_suffix(".tmp")
+    tmp.write_text(json.dumps(cred), encoding="utf-8")
+    os.replace(tmp, cred_file(cfg))
+    return "ok"
+
+
 def cmd_login(cfg):
     import qrcode
-    from http.cookies import SimpleCookie
-    base = "https://passport.bilibili.com/x/passport-login/web/qrcode/"
-    d = http_json(base + "generate?source=main-fe-header")[0]["data"]
+    url, key = login_start()
     qr = qrcode.QRCode(border=1)
-    qr.add_data(d["url"])
+    qr.add_data(url)
     qr.print_ascii(invert=True)
     png = cred_file(cfg).with_name("login-qrcode.png")
     png.parent.mkdir(parents=True, exist_ok=True)
-    qrcode.make(d["url"]).save(png)
+    qrcode.make(url).save(png)
     if sys.platform == "win32":
         os.startfile(png)
     elif sys.platform == "darwin":
@@ -213,21 +281,11 @@ def cmd_login(cfg):
     try:
         for _ in range(90):
             time.sleep(2)
-            body, cookies = http_json(base + f"poll?qrcode_key={d['qrcode_key']}&source=main-fe-header")
-            code = body["data"]["code"]
-            if code == 86038:
+            got = login_poll(cfg, key)
+            if got == "expired":
                 sys.exit("二维码过期了，重新运行 python run.py login")
-            if code == 0:
-                # bilibili_api's QrCodeLogin reads SESSDATA from data.url, which is empty now. It is in Set-Cookie.
-                jar = SimpleCookie()
-                for c in cookies:
-                    jar.load(c)
-                cred = {"sessdata": jar["SESSDATA"].value, "bili_jct": jar["bili_jct"].value,
-                        "dedeuserid": jar["DedeUserID"].value, "buvid3": guest_cookie().split("=", 1)[1]}
-                tmp = cred_file(cfg).with_suffix(".tmp")
-                tmp.write_text(json.dumps(cred), encoding="utf-8")
-                os.replace(tmp, cred_file(cfg))
-                print(f"登录成功，UID {cred['dedeuserid']}。凭证只存在本机：{cred_file(cfg)}")
+            if got == "ok":
+                print(f"登录成功，UID {load_cred(cfg)['dedeuserid']}。凭证只存在本机：{cred_file(cfg)}")
                 return 0
         sys.exit("等太久了，重新运行 python run.py login")
     finally:
@@ -238,10 +296,13 @@ def comment_rows(seen_text, day):
     return re.findall(rf"评论 {day} (BV\w{{10}}) rpid=(\d+)", seen_text)
 
 
-def verify_comments(workspace, day):
-    """A shadow-hidden comment is visible only to its author and sends no @ notification. Check as a guest."""
+def today_comments(workspace, day):
     seen = workspace / "seen.md"
-    rows = comment_rows(seen.read_text(encoding="utf-8"), day) if seen.exists() else []
+    return comment_rows(seen.read_text(encoding="utf-8"), day) if seen.exists() else []
+
+
+def verify_comments(rows, target):
+    """A shadow-hidden comment is visible only to its author and sends no @ notification. Check as a guest."""
     lines = []
     for bv, rpid in rows:
         try:
@@ -255,8 +316,8 @@ def verify_comments(workspace, day):
         except Exception as e:
             lines.append(f"- {bv} rpid={rpid}：检查失败（{type(e).__name__}: {e}）")
     if lines:
-        (workspace / "out").mkdir(exist_ok=True)
-        with open(workspace / "out" / f"{day}.md", "a", encoding="utf-8") as f:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(target, "a", encoding="utf-8") as f:
             f.write("\n\n## 评论可见性检查\n\n" + "\n".join(lines) + "\n")
         print("\n".join(lines))
 
@@ -381,7 +442,7 @@ async def fetch_notices(cred, state, self_mid):
     return out + await fetch_dms(c, state, self_mid)
 
 
-def cmd_inbox(cfg, workspace, dry_run):
+def cmd_inbox(cfg, workspace, dry_run, note=""):
     owner = int(cfg["inbox"]["owner_uid"] or 0)
     if not owner:
         sys.exit("先在 config.toml 的 [inbox] 里填 owner_uid（主号 UID）")
@@ -404,23 +465,79 @@ def cmd_inbox(cfg, workspace, dry_run):
             m["from"] = owner_name(cfg)
     print(f"有 {len(todo)} 条要处理：" + "、".join(
         f"{m['from']}（{m['kind']}，{'私信' if m['channel'] == 'dm' else '评论'}）" for m in todo))
+    chat_file = workspace / "chat.jsonl"
+    ctx = {"params": [f"你现在的状态：{note}"] if note else [],
+           "parts": [memory_part(workspace), chat_part(life.read_chat(chat_file), cfg)]}
     # Save before the agent runs, so a kill halfway cannot make it answer the same messages again.
     # A failed run also counts as handled: retrying every few minutes would look like spam.
     if not dry_run:
         write_json(state_file, state)
-    return run_agent(cfg, workspace, "inbox", dry_run, todo)
+        for m in todo:
+            life.append_chat(chat_file, {"t": m["time"] or int(time.time()), "who": m["kind"], "mid": m["mid"],
+                                         "from": m["from"], "channel": m["channel"], "text": m["content"],
+                                         "bvid": m["bvid"], "title": m["title"]})
+    extra = {"BILI_DM_KIND": "reply", "BILI_REPLY_MAX": "0", "BILI_SESSION": f"inbox-{int(time.time())}"}
+    return run_agent(cfg, workspace, "inbox", dry_run, todo, ctx, extra)
 
 
 def write_json(path, data):
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data), encoding="utf-8")
+    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, path)
 
 
 def cmd_once(cfg, workspace, dry_run):
     load_cred(cfg)
     rc = run_agent(cfg, workspace, "scroll", dry_run)
-    verify_comments(workspace, date.today().isoformat())
+    day = date.today().isoformat()
+    verify_comments(today_comments(workspace, day), workspace / "out" / f"{day}.md")
+    return rc
+
+
+STYLES = {"short": "随手刷几条，十分钟上下，看三到六个视频，没意思就早点停",
+          "long": "今天兴致好，可以连着刷半小时到一小时，看到想停就停，最多一小时"}
+
+
+def browse_context(cfg, workspace, style, dry_run, now):
+    """Everything one browse round needs to know: how long, may it message the owner, may it comment."""
+    owner, c, s = int(cfg["inbox"]["owner_uid"] or 0), cfg["comment"], cfg["scroll"]
+    chat = life.read_chat(workspace / "chat.jsonl")
+    mode, why = life.proactive(chat, cfg["life"], now) if owner else (None, "没填主号 UID")
+    day = date.fromtimestamp(now).isoformat()
+    comment_ok = bool(c["enabled"] and c["at"]) and len(today_comments(workspace, day)) < int(c["max_per_run"])
+    t = datetime.fromtimestamp(now)
+    params = [f"现在是 {t:%H:%M}", f"这次怎么刷：{STYLES[style]}",
+              {"share": "私信主号：可以。有想分享的视频或者想接着聊的话才发，最多 2 条，没有就不发",
+               "nudge": "私信主号：主号连着两次没回你。可以发一条轻轻的、撒娇式的问候（60 字以内），也可以不发",
+               None: f"私信主号：这一轮不发（{why}）"}[mode],
+              f"评论：{'可以在最值得的一条下面发 1 条 @ 主号' if comment_ok else '这一轮不发'}，主号昵称 {c['at'] or '未设置'}",
+              f"感兴趣的方向（只是参考，你自己的兴趣在记忆里）：{'、'.join(s['keywords'])}",
+              f"播放量门槛：{s['min_play']}，只看近 {s['days']} 天发布的"]
+    if mode:
+        params.append(f"主号 UID：{owner}")
+    week = f"{t.isocalendar().year}-W{t.isocalendar().week:02d}"
+    if t.weekday() == 6 and t.hour >= 18 and not (workspace / "journal" / f"week-{week}.md").exists():
+        params.append(f"今天是周日晚上，顺便写本周回顾 journal/week-{week}.md")
+    feedback = life.share_feedback(chat)
+    parts = [memory_part(workspace), chat_part([e for e in chat if e.get("who") in ("owner", "bot")], cfg),
+             "## 最近几次主动找主号的结果\n\n" + ("\n".join(
+                 f"{datetime.fromtimestamp(f['t']):%m-%d %H:%M} {'回了' if f['answered'] else '没回'}：{f['text']}"
+                 for f in feedback) or "（还没有）")]
+    tools = list(BROWSE_TOOLS)
+    if not dry_run:
+        tools += (["bili_send_message"] if mode else []) + (["bili_reply"] if comment_ok else [])
+    extra = {"BILI_DM_KIND": "proactive" if mode == "share" else "nudge", "BILI_DM_MAX": "2" if mode == "share" else "1",
+             "BILI_REPLY_MAX": "1" if comment_ok else "0", "BILI_SESSION": f"browse-{int(now)}"}
+    return {"params": params, "parts": parts, "tools": tools}, extra, [owner] if mode else []
+
+
+def cmd_browse(cfg, workspace, style, dry_run):
+    load_cred(cfg)
+    day = date.today().isoformat()
+    ctx, extra, dm_to = browse_context(cfg, workspace, style, dry_run, time.time())
+    before = today_comments(workspace, day)
+    rc = run_agent(cfg, workspace, "browse", dry_run, ctx=ctx, extra=extra, dm_to=dm_to)
+    verify_comments([r for r in today_comments(workspace, day) if r not in before], workspace / "journal" / f"{day}.md")
     return rc
 
 
@@ -495,40 +612,160 @@ def kill_job(p):
     p.wait()
 
 
+NOTES = {"awake": "有空", "busy": "在忙", "browsing": "正在刷站"}
+JOB_LIMITS = {"inbox": 20 * 60, "daily": 3600, "short": 25 * 60, "long": 75 * 60, "dryrun": 25 * 60}
+
+
+class Serve:
+    """The long-running loop. Each job is a new process: it reads config.toml again, and whatever it leaks
+    or hangs on ends with it. The web page only reads the state and queues actions; the loop does the work."""
+
+    def __init__(self, config, workspace, at, every):
+        self.config, self.ws, self.at, self.every = config, workspace, at, max(1, every)
+        self.base = ["--config", config, "--data", str(workspace)]
+        self.life_file = workspace / "life.json"
+        self.life = life.load(self.life_file)
+        self.rng = life.new_rng()
+        self.lock = threading.RLock()  # loop holds it around tick, and tick takes it again for the actions
+        self.wake = threading.Event()
+        self.jobs, self.actions, self.tries = {}, [], {}
+        self.daily_started, self.doctor_out = 0.0, ""
+
+    def running(self, name):
+        j = self.jobs.get(name)
+        return bool(j) and j[0].poll() is None
+
+    def start(self, name, argv, limit, now):
+        self.jobs[name] = (start_job(self.base + argv), now, limit)
+        log_line(self.ws, "开始 " + " ".join(argv))
+
+    def reap(self, now):
+        for name, (p, t0, limit) in list(self.jobs.items()):
+            if p.poll() is None and now - t0 > limit:
+                kill_job(p)
+                log_line(self.ws, f"{name} 跑了 {int(limit / 60)} 分钟还没完，已停掉")
+            if p.poll() is not None:
+                del self.jobs[name]
+                if name == "browse":
+                    life.after_session(self.life, now, self.rng)
+
+    def state(self, cfg, now):
+        if self.life.get("paused"):
+            return "paused", ""
+        if self.running("browse") or self.running("daily"):
+            return "browsing", ""
+        if not cfg["life"]["enabled"]:
+            return "awake", ""
+        return life.state(life.current_plan(self.life, cfg["life"], now, self.rng), now)
+
+    def tick(self, cfg, now):
+        self.reap(now)
+        with self.lock:
+            actions, self.actions = self.actions, []
+        for a in actions:
+            self.act(a, now)
+        if self.life.get("paused"):
+            return
+        st, why = self.state(cfg, now)
+        if cfg["life"]["enabled"]:
+            if st == "asleep":
+                self.life["next_inbox"] = max(self.life.get("next_inbox", 0), self.life["plan"]["wake"])
+            elif st == "awake" and not self.running("browse") and now >= self.life.get("next_session", 0):
+                style = life.session_style(self.rng)
+                self.start("browse", ["browse", "--style", style], JOB_LIMITS[style], now)
+                st = "browsing"
+        if not cfg["life"]["enabled"] or cfg["life"].get("daily_report"):
+            self.daily(now)
+        if (cfg["inbox"]["enabled"] and int(cfg["inbox"]["owner_uid"] or 0) and st != "asleep"
+                and not self.running("inbox") and now >= self.life.get("next_inbox", 0)):
+            self.start("inbox", ["inbox", "--note", NOTES[st] + (f"（{why}）" if why else "")], JOB_LIMITS["inbox"], now)
+            delay = life.inbox_delay(st, self.every, self.rng) if cfg["life"]["enabled"] else self.every * 60
+            self.life["next_inbox"] = now + delay
+
+    def daily(self, now):
+        t = datetime.fromtimestamp(now)
+        today, (hh, mm) = t.date().isoformat(), (int(x) for x in self.at.split(":"))
+        if (not self.running("daily") and (t.hour, t.minute) >= (hh, mm) and self.tries.get(today, 0) < 3
+                and now - self.daily_started >= 3600 and not (self.ws / "out" / f"{today}.md").exists()):
+            self.tries[today] = self.tries.get(today, 0) + 1  # no report yet: try again an hour later, 3 times a day
+            self.daily_started = now
+            self.start("daily", ["once"], JOB_LIMITS["daily"], now)
+
+    def act(self, action, now):
+        if action == "pause":
+            self.life["paused"] = True
+        elif action == "resume":
+            self.life["paused"] = False
+        elif action == "inbox":
+            self.life["next_inbox"] = 0
+        elif action == "browse" and not self.running("browse"):
+            self.start("browse", ["browse", "--style", "short"], JOB_LIMITS["short"], now)
+        elif action == "dryrun" and not self.running("dryrun"):
+            self.start("dryrun", ["browse", "--style", "short", "--dry-run"], JOB_LIMITS["dryrun"], now)
+        elif action == "daily" and not self.running("daily"):
+            self.start("daily", ["once"], JOB_LIMITS["daily"], now)
+        elif action == "doctor":
+            threading.Thread(target=self.doctor, daemon=True).start()
+
+    def doctor(self):
+        self.doctor_out = "检查中…"
+        p = subprocess.run([sys.executable, str(ROOT / "run.py"), "--config", self.config, "doctor"], cwd=ROOT,
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
+        self.doctor_out = (p.stdout + p.stderr).strip()
+
+    def request(self, action):
+        with self.lock:
+            self.actions.append(action)
+        self.wake.set()
+
+    def snapshot(self):
+        cfg, now = load_config(self.config), time.time()
+        with self.lock:
+            st, why = self.state(cfg, now)
+            chat = life.read_chat(self.ws / "chat.jsonl")
+            mode, reason = life.proactive(chat, cfg["life"], now)
+            day0 = datetime.combine(date.today(), datetime.min.time()).timestamp()
+            mood = self.ws / "memory" / "mood.txt"
+            return {"state": st, "why": why, "now": now, "plan": self.life.get("plan"), "life_on": cfg["life"]["enabled"],
+                    "next_session": self.life.get("next_session"), "next_inbox": self.life.get("next_inbox"),
+                    "jobs": sorted(n for n in self.jobs if self.running(n)), "paused": bool(self.life.get("paused")),
+                    "contacts_today": len({e.get("session") for e in chat if e["t"] >= day0 and e.get("who") == "bot"
+                                           and e.get("kind") in ("proactive", "nudge")}),
+                    "max_contacts": cfg["life"]["max_contacts_per_day"], "can_contact": mode, "contact_note": reason,
+                    "mood": mood.read_text(encoding="utf-8").strip() if mood.exists() else "",
+                    "logged_in": cred_file(cfg).exists(), "owner": owner_name(cfg), "doctor": self.doctor_out}
+
+    def loop(self):
+        while True:
+            try:
+                cfg = load_config(self.config)
+                with self.lock:
+                    self.tick(cfg, time.time())
+                    write_json(self.life_file, self.life)
+            except Exception as e:
+                log_line(self.ws, f"出错，下一轮再试：{type(e).__name__}: {e}")
+            self.wake.wait(60)
+            self.wake.clear()
+
+
 def cmd_serve(config, workspace, at, every):
     lock = single_instance(workspace / "serve.lock")
     if not lock:
         return 0  # schedule starts serve every 10 minutes to keep one alive. The extra ones end here.
     (workspace / "serve.pid").write_text(str(os.getpid()), encoding="utf-8")
     load_agent_env(workspace)
-    hh, mm = (int(x) for x in at.split(":"))
-    log_line(workspace, f"serve 启动，开了收件箱就每 {every} 分钟查一次消息，每天 {at} 以后刷一轮")
-    base = ["--config", config, "--data", str(workspace)]
-    daily, started, tries = None, 0.0, {}
-    # Each job is a new process: it reads config.toml again, and whatever it leaks or hangs on ends with it.
-    # The daily round runs beside the inbox checks, so a long round does not hold up the replies.
-    while True:
+    srv = Serve(config, workspace, at, every)
+    cfg = load_config(config)
+    log_line(workspace, "serve 启动，" + ("按作息刷站和查消息" if cfg["life"]["enabled"] else
+                                        f"开了收件箱就每 {every} 分钟查一次消息，每天 {at} 以后刷一轮"))
+    if cfg["web"]["password"]:
+        import web
         try:
-            cfg, now = load_config(config), datetime.now()
-            today = now.date().isoformat()
-            if daily and daily.poll() is None and time.time() - started > 3600:
-                kill_job(daily)
-                log_line(workspace, "每日一轮跑了一个小时还没完，已停掉")
-            if ((not daily or daily.poll() is not None) and (now.hour, now.minute) >= (hh, mm)
-                    and tries.get(today, 0) < 3 and time.time() - started >= 3600
-                    and not (workspace / "out" / f"{today}.md").exists()):
-                tries[today] = tries.get(today, 0) + 1  # no report yet: try again an hour later, 3 times a day
-                daily, started = start_job(base + ["once"]), time.time()
-            if cfg["inbox"]["enabled"] and int(cfg["inbox"]["owner_uid"] or 0):
-                p = start_job(base + ["inbox"])
-                try:
-                    p.wait(timeout=20 * 60)
-                except subprocess.TimeoutExpired:
-                    kill_job(p)
-                    log_line(workspace, "收件箱跑了 20 分钟还没完，已停掉")
-        except Exception as e:
-            log_line(workspace, f"出错，下一轮再试：{type(e).__name__}: {e}")
-        time.sleep(max(1, every) * 60)
+            web.start(srv, sys.modules[__name__], cfg["web"])
+            log_line(workspace, f"后台网页在 http://{cfg['web']['host']}:{cfg['web']['port']}")
+        except OSError as e:
+            log_line(workspace, f"后台网页没起来：{e}")
+    srv.loop()
 
 
 def stop_serve(workspace):
@@ -677,9 +914,9 @@ def cmd_schedule(cfg, args):
                                  start_new_session=True)
     inbox = cfg["inbox"]["enabled"] and cfg["inbox"]["owner_uid"]
     if rc == 0:
-        print("后台任务已停掉并删除。" if remove else
-              f"已在后台常驻运行。每天 {args.at} 以后刷一轮，" +
-              (f"每 {args.every} 分钟查一次消息" if inbox else "收件箱没开，不查消息") + f"。日志在 {workspace / 'logs'}")
+        plan = "按作息刷站，" if cfg["life"]["enabled"] else f"每天 {args.at} 以后刷一轮，"
+        print("后台任务已停掉并删除。" if remove else f"已在后台常驻运行。{plan}" +
+              (f"每 {args.every} 分钟上下查一次消息" if inbox else "收件箱没开，不查消息") + f"。日志在 {workspace / 'logs'}")
     return rc
 
 
@@ -726,8 +963,13 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("login", help="扫码登录小号")
     sub.add_parser("doctor", help="检查环境，并试调用一次 agent")
-    for name, text in (("once", "跑一轮每日任务"), ("inbox", "处理新的 @、回复和私信")):
-        sub.add_parser(name, help=text).add_argument("--dry-run", action="store_true", help="只拟稿，不发评论和回复")
+    for name, text in (("once", "跑一轮每日任务"), ("inbox", "处理新的 @、回复和私信"), ("browse", "按作息刷一会儿 B 站")):
+        sp = sub.add_parser(name, help=text)
+        sp.add_argument("--dry-run", action="store_true", help="只拟稿，不发评论和回复")
+        if name == "inbox":
+            sp.add_argument("--note", default="", help="告诉 agent 它现在在干什么，serve 会自动填")
+        if name == "browse":
+            sp.add_argument("--style", choices=sorted(STYLES), default="short", help="short 随手看几条，long 连着刷一阵")
     for name, text in (("install", "新机器一条命令装好：虚拟环境、依赖、登录、检查，最后在后台常驻运行"),
                        ("serve", "常驻运行：定时查消息，每天刷一轮"), ("schedule", "设成登录后自动在后台常驻运行")):
         sp = sub.add_parser(name, help=text)
@@ -749,7 +991,9 @@ def main(argv=None):
     if args.cmd == "serve":
         return cmd_serve(str(Path(args.config).resolve()), workspace, args.at, args.every)
     if args.cmd == "inbox":
-        return cmd_inbox(cfg, workspace, args.dry_run)
+        return cmd_inbox(cfg, workspace, args.dry_run, args.note)
+    if args.cmd == "browse":
+        return cmd_browse(cfg, workspace, args.style, args.dry_run)
     return cmd_once(cfg, workspace, args.dry_run)
 
 

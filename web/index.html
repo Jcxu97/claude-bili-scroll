@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Claude 大小姐的小屋</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cg stroke='%23D97757' stroke-width='2.6' stroke-linecap='round'%3E%3Cpath d='M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="stylesheet" href="app.css">
+<script>document.documentElement.dataset.theme = localStorage.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")</script>
+</head>
+<body>
+<div id="login" class="login hidden">
+  <div class="card">
+    <img src="img/sleepy.webp" alt="">
+    <h2>敲门要先报暗号</h2>
+    <p class="muted small">密码写在 config.toml 的 [web] 里。</p>
+    <form id="login-form">
+      <input class="field" id="pw" type="password" placeholder="密码" autocomplete="current-password" autofocus>
+      <button class="btn primary" type="submit" style="justify-content:center">进门</button>
+      <div id="login-err" class="small" style="color:var(--accent-ink);min-height:1.4em"></div>
+    </form>
+  </div>
+</div>
+
+<div id="app" class="app hidden">
+  <aside class="side">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4"/></svg>
+      <span>大小姐的小屋</span>
+    </div>
+    <nav class="nav" id="nav">
+      <a href="#/"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9.5h13V10"/></svg>概览</a>
+      <a href="#/chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/></svg>对话</a>
+      <a href="#/journal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="13" rx="2"/><path d="m10 9 5 2.5-5 2.5z"/></svg>刷站日记</a>
+      <a href="#/files"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h7"/></svg>档案</a>
+      <a href="#/memory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>记忆</a>
+      <a href="#/settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>设置</a>
+      <a href="#/run"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16v12H4z"/><path d="m8 10 3 2-3 2M13 14h3"/></svg>运行</a>
+    </nav>
+    <div class="foot">
+      <button class="btn icon" id="theme" title="换深浅色"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg></button>
+      <button class="btn" id="logout">退出</button>
+    </div>
+  </aside>
+  <main class="main" id="view"></main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

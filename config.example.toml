@@ -30,7 +30,7 @@ keywords = ["AI工具", "编程", "数码评测", "知识科普", "生活技巧"
 enabled = false
 # 主号的 B 站昵称（评论里 @ 的就是它）
 at = ""
-# 每轮最多发几条
+# 每轮最多发几条。作息模式下是一天最多几条
 max_per_run = 1
 
 [inbox]
@@ -48,3 +48,27 @@ file = "personas/neutral.md"
 [paths]
 # 日报、判重表、凭证、日志都放在这里
 data = "data"
+
+[life]
+# 作息模式。打开以后不再每天定点刷一轮，而是按自己的作息醒着时刷一会儿、写刷站日记，
+# 想分享时私信主号（要先开 [inbox] 并填 owner_uid）。关掉就回到每天一轮日报
+enabled = true
+# 大概几点起、几点睡，每天随机浮动一小时以内，周末再晚 weekend_shift 分钟
+wake = "09:30"
+sleep = "01:00"
+weekend_shift = 60
+# 你自己睡觉的时段，这段时间不会主动私信你
+owner_quiet = ["01:00", "09:00"]
+# 一天最多主动找你几次，两次之间至少隔多少分钟。连着两次没回，只会再轻轻问候一次，然后等你回
+max_contacts_per_day = 10
+min_gap_minutes = 45
+# 留给你看的收藏夹名字，没有会自动新建一个公开的
+favorites = "给主号的"
+# 作息模式下还要不要每天写一份日报（[comment] 的 max_per_run 在作息模式下是一天的上限）
+daily_report = false
+
+[web]
+# 后台网页。password 留空就不开。host 只填内网或 Tailscale 地址，不要填公网地址
+host = "127.0.0.1"
+port = 8788
+password = ""
