@@ -159,7 +159,9 @@ def memory_part(workspace):
     for name in MEMORY_FILES:
         p = workspace / "memory" / name
         text = p.read_text(encoding="utf-8").strip() if p.exists() else ""
-        out.append(f"### memory/{name}\n\n{text[-3000:] or '（还是空的）'}")
+        # owner.md starts with what the owner likes, so cut its end. The other files add new lines at the end.
+        text = text[:6000] if name == "owner.md" else text[-3000:]
+        out.append(f"### memory/{name}\n\n{text or '（还是空的）'}")
     return "## 你的记忆（工作目录下的 memory/，按 prompt 里写的规则自己维护）\n\n" + "\n\n".join(out)
 
 

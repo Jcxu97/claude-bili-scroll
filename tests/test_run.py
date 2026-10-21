@@ -51,6 +51,16 @@ class PromptTest(unittest.TestCase):
         prompt, _ = run.build_prompt(cfg(), "scroll", dry_run=True)
         self.assertNotIn("冷门题材的播放量门槛", prompt)
 
+    def test_memory_keeps_the_top_of_owner_md(self):
+        with tempfile.TemporaryDirectory() as d:
+            mem = Path(d) / "memory"
+            mem.mkdir()
+            (mem / "owner.md").write_text("## 喜欢\n- 酒店评测\n" + "- 别的事\n" * 1100, encoding="utf-8")
+            (mem / "topics.md").write_text("- 旧话题\n" * 900 + "- 新话题", encoding="utf-8")
+            part = run.memory_part(Path(d))
+            self.assertIn("酒店评测", part)
+            self.assertIn("新话题", part)
+
 
 class AgentCommandTest(unittest.TestCase):
     def test_claude_and_codex_get_model_effort_and_mcp(self):
