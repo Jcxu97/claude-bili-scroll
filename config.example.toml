@@ -24,6 +24,9 @@ days = 30
 weekly_hot = true
 # 搜索关键词，题材不限
 keywords = ["AI工具", "编程", "数码评测", "知识科普", "生活技巧", "纪录片"]
+# keywords 里视频少的题材，用下面这个低一点的播放量门槛
+niche_keywords = []
+niche_min_play = 10000
 
 [comment]
 # 挑完之后，要不要在最值得的那条视频下面发评论 @ 你的主号

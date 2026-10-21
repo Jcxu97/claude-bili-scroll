@@ -41,7 +41,8 @@ UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
 DEFAULTS = {
     "agent": {"name": "claude", "model": "", "effort": "medium", "custom_command": []},
     "scroll": {"max_picks": 5, "min_play": 100000, "days": 30, "weekly_hot": True,
-               "keywords": ["AI工具", "编程", "数码评测", "知识科普", "生活技巧", "纪录片"]},
+               "keywords": ["AI工具", "编程", "数码评测", "知识科普", "生活技巧", "纪录片"],
+               "niche_keywords": [], "niche_min_play": 10000},
     "comment": {"enabled": False, "at": "", "max_per_run": 1},
     "inbox": {"enabled": False, "owner_uid": 0, "max_stranger_replies_per_day": 10},
     "persona": {"file": "personas/neutral.md"},
@@ -104,6 +105,13 @@ def owner_name(cfg):
     return cfg["comment"]["at"] or "主人"
 
 
+def play_rules(s):
+    rules = [f"播放量门槛：{s['min_play']}，只看近 {s['days']} 天发布的"]
+    if s["niche_keywords"]:
+        rules.append(f"冷门题材的播放量门槛：{s['niche_min_play']}（{'、'.join(s['niche_keywords'])}）")
+    return rules
+
+
 def build_prompt(cfg, task, dry_run, messages=None, ctx=None):
     """Return (prompt, tools). The persona and the voice skill are appended to every task.
 
@@ -121,7 +129,7 @@ def build_prompt(cfg, task, dry_run, messages=None, ctx=None):
         comment_on = c["enabled"] and c["at"] and not dry_run
         params += [f"关键词：{'、'.join(s['keywords'])}",
                    f"每周必看：{'开' if s['weekly_hot'] else '关'}",
-                   f"播放量门槛：{s['min_play']}，只看近 {s['days']} 天发布的",
+                   *play_rules(s),
                    f"每天最多挑 {s['max_picks']} 条",
                    f"评论：{'开' if comment_on else '关'}，主号昵称 {c['at'] or '未设置'}，每轮最多 {c['max_per_run']} 条"]
         if comment_on:
@@ -549,7 +557,7 @@ def browse_context(cfg, workspace, style, dry_run, now):
                None: f"私信主号：这一轮不发（{why}）"}[mode],
               f"评论：{'可以在最值得的一条下面发 1 条 @ 主号' if comment_ok else '这一轮不发'}，主号昵称 {c['at'] or '未设置'}",
               f"感兴趣的方向（只是参考，你自己的兴趣在记忆里）：{'、'.join(s['keywords'])}",
-              f"播放量门槛：{s['min_play']}，只看近 {s['days']} 天发布的"]
+              *play_rules(s)]
     if mode:
         params.append(f"主号 UID：{owner}")
     week = f"{t.isocalendar().year}-W{t.isocalendar().week:02d}"

@@ -43,6 +43,14 @@ class PromptTest(unittest.TestCase):
         _, tools = run.build_prompt(cfg(), "scroll", dry_run=False)
         self.assertNotIn("bili_reply", tools)
 
+    def test_niche_keywords_get_their_own_play_threshold(self):
+        c = cfg(scroll={"niche_keywords": ["酒店评测", "凯悦酒店"], "niche_min_play": 1000})
+        prompt, _ = run.build_prompt(c, "scroll", dry_run=True)
+        self.assertIn("播放量门槛：100000", prompt)
+        self.assertIn("冷门题材的播放量门槛：1000（酒店评测、凯悦酒店）", prompt)
+        prompt, _ = run.build_prompt(cfg(), "scroll", dry_run=True)
+        self.assertNotIn("冷门题材的播放量门槛", prompt)
+
 
 class AgentCommandTest(unittest.TestCase):
     def test_claude_and_codex_get_model_effort_and_mcp(self):

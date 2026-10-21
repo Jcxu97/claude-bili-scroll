@@ -21,7 +21,7 @@ description: 操作 claude-bili-scroll（替用户每天刷 B 站的工具）。
 
 都在 `config.toml` 里，改完不用重启，下一轮自动生效。
 1. 题材改 `[scroll] keywords`
-2. 门槛改 `[scroll] min_play`（播放量）、`days`（近几天）、`max_picks`（每天几条）
+2. 门槛改 `[scroll] min_play`（播放量）、`days`（近几天）、`max_picks`（每天几条），视频少的题材放进 `niche_keywords`，用 `niche_min_play` 单独定门槛
 3. 人设改 `[persona] file`，自带 `personas/neutral.md` 和 `personas/ojousama.md`。用户想要新的人设，就照着这两个文件的结构在 `personas/` 下新建一个，保留"对陌生人"那一节
 4. 评论和回复改 `[comment]` 和 `[inbox]`。打开之前先跟用户确认，这是用用户自己的号公开说话
 5. 作息、主动私信的次数和间隔改 `[life]`。后台网页改 `[web]`，`password` 留空就不开
