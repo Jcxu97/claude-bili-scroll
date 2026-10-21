@@ -244,12 +244,14 @@ pages.memory = async () => {
   if (!live(id)) return;
   view().innerHTML = `<div class="page-head"><div><h1>记忆</h1><p>她自己维护这些文件。你也可以直接改，下一轮她就会读到。</p></div></div>
     <div class="grid g2">${MEMORY.map(([n, t, h]) => `<div class="card"><h3>${t}</h3><p class="muted small" style="margin-top:-4px">${h}</p>
-      <textarea class="edit${n === "mood.txt" ? " short" : ""}" data-n="${n}" placeholder="还是空的">${esc(mem[n])}</textarea>
+      <textarea class="edit${n === "mood.txt" ? " short" : ""}" data-n="${n}" placeholder="还是空的">${esc(mem[n].text)}</textarea>
       <div class="row end" style="margin-top:8px"><button class="btn primary" data-save="${n}">保存</button></div></div>`).join("")}</div>`;
   view().querySelectorAll("[data-save]").forEach(b => b.onclick = async () => {
     const n = b.dataset.save;
-    try { await api("memory/" + n, { method: "PUT", body: { text: view().querySelector(`textarea[data-n="${n}"]`).value } }); toast("存好了"); }
-    catch (e) { toast(e.message); }
+    try {
+      const r = await api("memory/" + n, { method: "PUT", body: { text: view().querySelector(`textarea[data-n="${n}"]`).value, mtime: mem[n].mtime } });
+      mem[n].mtime = r.mtime; toast("存好了");
+    } catch (e) { toast(e.message); }
   });
 };
 

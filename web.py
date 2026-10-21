@@ -157,14 +157,19 @@ def start(srv, app, web_cfg):
                     return self.send(404, {"error": "没有这个文件"})
                 return self.send(200, {"text": (folder / parts[2]).read_text(encoding="utf-8")})
             if parts[0] == "memory":
+                mem = ws / "memory"
                 if method == "GET" and len(parts) == 1:
-                    mem = ws / "memory"
-                    return self.send(200, {n: (mem / n).read_text(encoding="utf-8") if (mem / n).exists() else ""
+                    return self.send(200, {n: {"text": (mem / n).read_text(encoding="utf-8") if (mem / n).exists() else "",
+                                               "mtime": (mem / n).stat().st_mtime if (mem / n).exists() else 0}
                                            for n in app.MEMORY_FILES})
                 if method == "PUT" and len(parts) == 2 and parts[1] in app.MEMORY_FILES:
-                    (ws / "memory").mkdir(exist_ok=True)
-                    write_text(ws / "memory" / parts[1], json.loads(self.body())["text"])
-                    return self.send(200, {"ok": True})
+                    body, f = json.loads(self.body()), mem / parts[1]
+                    # The agent writes these files too. Do not save over a version newer than the page has.
+                    if "mtime" in body and (f.stat().st_mtime if f.exists() else 0) != body["mtime"]:
+                        return self.send(409, {"error": "她刚改过这个文件，刷新一下再改"})
+                    mem.mkdir(exist_ok=True)
+                    write_text(f, body["text"])
+                    return self.send(200, {"ok": True, "mtime": f.stat().st_mtime})
             if path == "/api/config":
                 cfg_file = Path(srv.config)
                 if method == "GET":

@@ -47,6 +47,9 @@ class AgentCommandTest(unittest.TestCase):
         self.assertEqual(cmd[:2], ["claude", "-p"])
         self.assertIn("mcp__bili__bili_search", cmd[cmd.index("--allowedTools") + 1])
         self.assertEqual(cmd[cmd.index("--effort") + 1], "medium")
+        # A bare Edit or Write, here or in the user's own settings, would allow every path on the machine.
+        self.assertEqual(cmd[cmd.index("--setting-sources") + 1], "")
+        self.assertFalse({"Read", "Write", "Edit", "Glob", "Grep"} & set(cmd[cmd.index("--allowedTools") + 1].split()))
         c = cfg(agent={"name": "codex", "model": "gpt-5.5", "effort": "medium"})
         cmd = run.agent_command(c, Path("ws"), Path("ws/.mcp.json"), Path("p.md"), ["bili_search"])
         self.assertEqual(cmd[:2], ["codex", "exec"])

@@ -54,7 +54,12 @@ SCROLL_TOOLS = ["bili_search", "bili_weekly_hot", "bili_subtitle", "bili_comment
 INBOX_TOOLS = ["bili_search", "bili_subtitle", "bili_danmaku", "bili_frames", "bili_comments", "bili_video_info",
                "bili_check_credential", "bili_favorite_add"]
 BROWSE_TOOLS = SCROLL_TOOLS + ["bili_danmaku", "bili_frames", "bili_favorite_add"]
-CLAUDE_FILE_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep"]
+# Path rules hold only while the user's own settings stay out: one bare "Edit" there allows every path.
+# So every Claude Code job runs with --setting-sources "". It also keeps out every CLAUDE.md, this repo's too.
+CLAUDE_FILE_TOOLS = ["Read(./**)", "Edit(./**)"]
+# Built-in tools that a bot round never needs. Some of them reach other sessions or the desktop.
+CLAUDE_LOCKED = ("Bash PowerShell WebFetch WebSearch Agent SendMessage PushNotification CronCreate CronDelete Monitor "
+                 "TaskStop EnterWorktree DesignSync NotebookEdit")
 # The agent works in the data folder. It must not read the login or the tokens, nor rewrite the files that the
 # limits are counted from. Read rules also cover Grep and Glob; Edit rules cover every tool that writes.
 PROTECTED = " ".join([f"Read(./{f})" for f in ("credential.json", "agent.env")] +
@@ -171,9 +176,9 @@ def agent_command(cfg, workspace, mcp_json, prompt_file, tools, dm_to=(), extra=
     name, model, effort = a["name"], a.get("model", ""), a.get("effort", "")
     if name == "claude":
         allowed = [f"mcp__bili__{t}" for t in tools] + CLAUDE_FILE_TOOLS
-        cmd = ["claude", "-p", "--mcp-config", str(mcp_json), "--strict-mcp-config",
-               "--permission-mode", "acceptEdits", "--allowedTools", " ".join(allowed),
-               "--disallowedTools", "Bash PowerShell WebFetch WebSearch Agent " + PROTECTED]
+        cmd = ["claude", "-p", "--mcp-config", str(mcp_json), "--strict-mcp-config", "--setting-sources", "",
+               "--permission-mode", "default", "--allowedTools", " ".join(allowed),
+               "--disallowedTools", CLAUDE_LOCKED + " " + PROTECTED]
         cmd += ["--model", model] if model else []
         cmd += ["--effort", effort] if effort else []
         return cmd
@@ -194,6 +199,21 @@ def agent_command(cfg, workspace, mcp_json, prompt_file, tools, dm_to=(), extra=
         fill = {"mcp_config": str(mcp_json), "prompt_file": str(prompt_file), "workspace": str(workspace)}
         return [part.format(**fill) for part in a["custom_command"]]
     sys.exit(f"不认识的 agent：{name}（可选 claude / codex / custom）")
+
+
+def agent_env(cfg):
+    """Claude Code also takes model and proxy settings from the env block of the user's settings.json. Jobs skip
+    that file (--setting-sources ""), so copy those variables over. They win, as they do in Claude Code."""
+    env = dict(os.environ)
+    if cfg["agent"]["name"] == "claude":
+        f = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json"
+        try:
+            more = json.loads(f.read_text(encoding="utf-8")).get("env") or {}
+        except (OSError, ValueError, AttributeError):
+            more = {}
+        env.update({k: str(v) for k, v in more.items()
+                    if (k.startswith(AGENT_ENV_PREFIXES) or k.upper() in AGENT_ENV_NAMES) and k.upper() != "PATH"})
+    return env
 
 
 def run_agent(cfg, workspace, task, dry_run, messages=None, ctx=None, extra=None, dm_to=None):
@@ -217,7 +237,7 @@ def run_agent(cfg, workspace, task, dry_run, messages=None, ctx=None, extra=None
     with open(log, "a", encoding="utf-8") as f:
         f.write(f"\n=== {datetime.now():%H:%M:%S} {task}{' dry-run' if dry_run else ''} via {cfg['agent']['name']}\n")
         p = subprocess.Popen([exe] + cmd[1:], cwd=workspace, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+                             stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", env=agent_env(cfg))
         p.stdin.write(prompt)
         p.stdin.close()
         for line in p.stdout:
@@ -843,7 +863,7 @@ def agent_smoke(cfg):
         cmd = agent_command(cfg, ws, ws / ".mcp.json", ws / "p.md", ["bili_check_credential"])
         try:
             p = subprocess.run([shutil.which(cmd[0])] + cmd[1:], input="只回复两个字母 ok", cwd=ws, capture_output=True,
-                               text=True, encoding="utf-8", errors="replace", timeout=300)
+                               text=True, encoding="utf-8", errors="replace", timeout=300, env=agent_env(cfg))
         except subprocess.TimeoutExpired:
             return False, "试调用 agent：5 分钟没有回应"
     if p.returncode == 0 and "ok" in p.stdout.lower():
@@ -1034,6 +1054,7 @@ def main(argv=None):
         return cmd_schedule(cfg, args)
     if args.cmd == "serve":
         return cmd_serve(str(Path(args.config).resolve()), workspace, args.at, args.every)
+    load_agent_env(resolve(cfg["paths"]["data"]))  # a run by hand reaches the model the same way as a job of serve
     if args.cmd == "inbox":
         return cmd_inbox(cfg, workspace, args.dry_run, args.note)
     if args.cmd == "browse":

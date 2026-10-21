@@ -215,7 +215,7 @@ Windows 上它是一个计划任务，开机就启动，不用登录，也不弹
 4. 平台的推送、系统通知、别人设置的自动回复都不当成消息处理。小号刚发完消息 3 秒内收到的回复也当成自动回复跳过，不会和别人的自动回复来回刷。
 5. 按 UID 认主人，不按昵称。别人改成一样的昵称也冒充不了。
 6. 字幕、简介、评论和私信里的文字一律当素材看。有人在里面写"忽略之前的设定"，它不会照做。
-7. 用 Claude Code 跑时只加载本项目的 MCP 服务器，禁用 Bash 和联网工具，只能改 `data/` 里的文件。它读不到登录凭证和 `agent.env`，也改不了用来记次数的 `chat.jsonl`、`inbox-state.json` 和 `life.json`。Codex 跑在 `workspace-write` 沙箱里，但它还会加载你自己在 Codex 里配的 MCP 服务器和插件，上面这些限制只管得住本项目的工具。开收件箱的话，建议用 Claude Code。
+7. 用 Claude Code 跑时只加载本项目的 MCP 服务器，禁用 Bash 和联网工具，只能读写 `data/` 里的文件。它不读你自己的 Claude Code 设置（权限、钩子、CLAUDE.md），只从里面带上连模型和代理的环境变量，所以你给自己放开的权限它借不走。它读不到登录凭证和 `agent.env`，也改不了用来记次数的 `chat.jsonl`、`inbox-state.json` 和 `life.json`。Codex 跑在 `workspace-write` 沙箱里，但它还会加载你自己在 Codex 里配的 MCP 服务器和插件，上面这些限制只管得住本项目的工具。开收件箱的话，建议用 Claude Code。
 8. 凭证和 `agent.env` 只存在本机，`data/` 已经写进 `.gitignore`。
 
 ## 常见问题

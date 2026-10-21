@@ -1495,7 +1495,8 @@ async def bili_send_message(receiver_uid: int, text: str) -> str:
             "data": result if isinstance(result, dict) else str(result),
         }, ensure_ascii=False)
     except Exception as e:
-        _chat_log({"who": "bot", "channel": "dm", "kind": "failed", "text": f"上一条私信没发出去：{e}"[:200]})
+        _chat_log({"who": "bot", "channel": "dm", "kind": "failed", "text": f"上一条私信没发出去：{e}"[:200],
+                   "session": os.environ.get("BILI_SESSION", "")})
         return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
 
 
