@@ -615,7 +615,7 @@ $s = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopIfGoingOnBatterie
   -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
 Get-ScheduledTask -TaskName 'claude-bili-scroll*' -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$false
 if ($env:CBS_REMOVE -eq '1') { exit }
-$me = '{0}\{1}' -f $env:USERDOMAIN, $env:USERNAME
+$me = [Security.Principal.WindowsIdentity]::GetCurrent().Name  # USERDOMAIN is WORKGROUP in an SSH session
 $arg = '"{0}" "{1}" "{2}" --config "{3}" serve --at {4} --every {5}' -f `
   $env:CBS_VBS, $env:CBS_PY, $env:CBS_RUN, $env:CBS_CFG, $env:CBS_AT, $env:CBS_EVERY
 $act = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument $arg -WorkingDirectory $env:CBS_ROOT
