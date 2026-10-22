@@ -98,6 +98,8 @@ select.btn { padding-right: 10px; }
   background-image: radial-gradient(color-mix(in srgb, var(--accent) 22%, transparent) 1px, transparent 1.4px);
   background-size: 18px 18px; -webkit-mask-image: linear-gradient(110deg, #000 0%, transparent 45%); mask-image: linear-gradient(110deg, #000 0%, transparent 45%); }
 .hero .figure { position: relative; z-index: 1; height: 330px; display: flex; align-items: flex-end; justify-content: center; }
+.hero .figure:empty { display: none; }
+.hero .figure:empty + .talk { grid-column: 1 / -1; padding-left: 34px; }
 .hero .figure img { max-height: 318px; max-width: 100%; object-fit: contain; filter: drop-shadow(0 14px 18px rgba(110, 50, 20, .22)); }
 .hero .talk { position: relative; z-index: 1; padding: 34px 34px 34px 6px; align-self: center; }
 .hero .hello { font-family: var(--serif); font-size: 30px; font-weight: 600; margin: 0; line-height: 1.2; }
@@ -229,6 +231,7 @@ textarea:focus, input:focus { outline: none; box-shadow: inset 0 0 0 1.5px var(-
   .hero .figure { height: 250px; order: 2; }
   .hero .figure img { max-height: 240px; }
   .hero .talk { padding: 26px 22px 0; }
+  .hero .figure:empty + .talk { padding: 26px 22px; }
   .hero .hello { font-size: 25px; }
   .bubble { font-size: 16.5px; }
   .bubble::before { display: none; }

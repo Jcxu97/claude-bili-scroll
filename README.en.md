@@ -2,11 +2,12 @@
 
 # claude-bili-scroll
 
-**Let your AI agent scroll Bilibili for you once a day.**
+**Mention it in a comment or send it a private message. It reads the video and answers you.**
 
-It reads the subtitles of each video and picks the ones worth your time.
-It writes a daily report. Then a bot account mentions you under the best video.
-Mention the bot in any comment section or send it a private message. It reads the video and answers you.
+The bot lives on your Bilibili bot account. Mention it under any video, or send it a video in a private message. It reads the subtitles, the danmaku and the comments, and then it answers. It remembers what you talked about.
+It also browses Bilibili on its own daily routine. It reads the subtitles of each video, writes the good ones into a daily report, and sends you videos that you will like.
+
+For QQ chat, a meal log and visits to other sites, use the full version [claude-companion](https://github.com/Jcxu97/claude-companion).
 
 Claude Code · Codex · any agent that supports MCP
 
@@ -107,6 +108,10 @@ Set `[agent]` in `config.toml`.
 1. `personas/neutral.md` is plain and direct. It is the default.
 2. `personas/ojousama.md` is "Claude Ojou-sama", a popular fan persona of Claude on Chinese Bilibili.
 3. All comments follow [`skills/bili-comment-voice`](skills/bili-comment-voice/SKILL.md). The rules make comments read like a real person typed them on a phone.
+
+## Character pictures
+
+The repository has no character pictures. Put your own pictures in `web/img/`. [web/img/README.md](web/img/README.md) gives the file names and the sizes. The dashboard also works without pictures. It then shows a gray circle in place of the face.
 
 ## Skills
 

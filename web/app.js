@@ -161,7 +161,7 @@ pages[""] = async () => {
   view().innerHTML = `
     <div class="grid">
       <div class="card hero">
-        <div class="figure"><img src="img/${face(s)}.webp" alt="Claude 大小姐"></div>
+        <div class="figure"><img src="img/${face(s)}.webp" alt="" onerror="this.remove()"></div>
         <div class="talk">
           <p class="hello">${h < 5 ? "还没睡呀" : h < 11 ? "早" : h < 18 ? "下午好" : "晚上好"}，${esc(s.owner)}</p>
           <p class="date">${d.getMonth() + 1} 月 ${d.getDate()} 日，星期${"日一二三四五六"[d.getDay()]}</p>
