@@ -18,7 +18,7 @@
    5. 人设用中性（`personas/neutral.md`）还是 Claude 大小姐（`personas/ojousama.md`）
 4. 让用户准备一个 B 站小号，不要用主号。
 5. 运行 `python run.py install`。它会建 `.venv`、装依赖，然后运行登录，让用户用小号的 App 扫码，确认时选"长期"。国内网络慢就先设环境变量 `PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple`。
-6. `install` 接着跑 `doctor`，会真的调用一次 agent。有 `[fail]` 就按提示修好，再运行一次 `install`。全部 `[ok]` 以后，它会让 `serve` 在后台常驻运行，按 `[life]` 的作息刷站和查消息。用户想要后台网页，就在 `[web]` 里生成一个随机密码填上，按 README 的"后台网页"一节放行端口，再运行一次 `schedule`。Windows 上用管理员终端运行 `install`，后台任务才能开机就跑，不用等用户登录。
+6. `install` 接着跑 `doctor`，会真的调用一次 agent。有 `[fail]` 就按提示修好，再运行一次 `install`。全部 `[ok]` 以后，它会让 `serve` 在后台常驻运行，按 `[life]` 的作息刷站和查消息。用户想要后台网页，就在 `[web]` 里生成一个随机密码填上，按 README.zh-CN.md 的"后台网页"一节放行端口，再运行一次 `schedule`。Windows 上用管理员终端运行 `install`，后台任务才能开机就跑，不用等用户登录。
 7. 用 `.venv` 里的 python 运行 `run.py --data data-trial once --dry-run` 试一轮（Windows 是 `.venv\Scripts\python`，macOS 和 Linux 是 `.venv/bin/python`）。它只写日报，让用户看一眼 `data-trial/out/` 里的日报满不满意。用户要自动评论的话，满意了再把 `[comment] enabled` 改成 `true`，不用重启，下一轮生效。
 8. 用户要搬到另一台机器（比如常开的服务器），先在旧机器上运行 `python run.py schedule --remove`，再把 `config.toml` 和整个数据目录拷到新机器，数据目录换了位置就改 `[paths] data`，最后在新机器上运行 `python run.py install`。
 
