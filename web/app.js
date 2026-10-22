@@ -338,13 +338,15 @@ async function qrLogin() {
   btn.disabled = true;
   try {
     const { key, svg } = await api("qr/start", { method: "POST", body: {} });
-    box.innerHTML = `<div class="qr">${svg}</div><span class="muted small" id="qr-state">等你扫码，三分钟内有效</span>`;
+    box.innerHTML = `<div class="qr">${svg}</div><span class="muted small" id="qr-state">等你扫码，三分钟内有效</span>
+      <span class="muted small only-m">用这台手机扫不了的话，截个图，在小号 B站 App 的扫一扫里点相册选这张图。</span>`;
     const until = Date.now() + 180000;
     const poll = async () => {
       if (!$("#qr-state")) return;
       let result;
       try { ({ result } = await api("qr/poll", { method: "POST", body: { key } })); }
       catch (e) { box.innerHTML = `<span class="muted small">登录没成功：${esc(e.message)}，再点一次</span>`; btn.disabled = false; return; }
+      if (result === "owner") { box.innerHTML = `<span class="muted small">扫码的是主号，没有保存。把 B站 App 切到小号，再点一次</span>`; btn.disabled = false; return; }
       if (result === "ok") { box.innerHTML = `<span class="pill accent">登录好了</span>`; btn.disabled = false; return; }
       if (result === "expired" || Date.now() > until) { box.innerHTML = `<span class="muted small">二维码过期了，再点一次</span>`; btn.disabled = false; return; }
       setTimeout(poll, 2000);

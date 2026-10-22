@@ -7,6 +7,7 @@ import unittest
 from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import life  # noqa: E402
@@ -115,6 +116,14 @@ class InboxTest(unittest.TestCase):
         self.assertEqual([(m["rpid"], m["kind"]) for m in todo], [(1, "owner"), (2, "owner"), (3, "stranger")])
         again = run.select_messages(msgs, state, me, owner, stranger_limit=1, today="2026-01-01", since=1000)
         self.assertEqual(again, [])
+
+    def test_qr_login_refuses_the_owner_account(self):
+        with tempfile.TemporaryDirectory() as d:
+            c = cfg(inbox={"owner_uid": 42}, paths={"data": d})
+            cookies = ["SESSDATA=s; Path=/", "bili_jct=j; Path=/", "DedeUserID=42; Path=/"]
+            with mock.patch.object(run, "http_json", return_value=({"data": {"code": 0}}, cookies)):
+                self.assertEqual(run.login_poll(c, "key"), "owner")
+            self.assertFalse(run.cred_file(c).exists())
 
 
 class ServeTest(unittest.TestCase):

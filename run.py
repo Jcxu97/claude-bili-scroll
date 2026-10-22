@@ -279,7 +279,7 @@ def login_start():
 
 
 def login_poll(cfg, key):
-    """Return "ok" (credential saved), "expired" or "wait"."""
+    """Return "ok" (credential saved), "owner" (the owner scanned it, nothing saved), "expired" or "wait"."""
     from http.cookies import SimpleCookie
     body, cookies = http_json(QR_API + f"poll?qrcode_key={key}&source=main-fe-header")
     code = body["data"]["code"]
@@ -291,6 +291,8 @@ def login_poll(cfg, key):
     jar = SimpleCookie()
     for c in cookies:
         jar.load(c)
+    if jar["DedeUserID"].value == str(int(cfg["inbox"]["owner_uid"] or 0)):
+        return "owner"  # with the owner's cookies the bot would watch, comment and send messages as the owner
     cred = {"sessdata": jar["SESSDATA"].value, "bili_jct": jar["bili_jct"].value,
             "dedeuserid": jar["DedeUserID"].value, "buvid3": guest_cookie().split("=", 1)[1]}
     cred_file(cfg).parent.mkdir(parents=True, exist_ok=True)
@@ -320,6 +322,8 @@ def cmd_login(cfg):
             got = login_poll(cfg, key)
             if got == "expired":
                 sys.exit("二维码过期了，重新运行 python run.py login")
+            if got == "owner":
+                sys.exit("扫码的是主号，没有保存。把 B 站 App 切到小号，重新运行 python run.py login")
             if got == "ok":
                 print(f"登录成功，UID {load_cred(cfg)['dedeuserid']}。凭证只存在本机：{cred_file(cfg)}")
                 return 0
