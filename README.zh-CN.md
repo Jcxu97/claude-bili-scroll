@@ -7,7 +7,7 @@
 它住在你的 B 站小号上。你在任何视频下面 @ 它，或者把视频私信给它，它读完字幕、弹幕和评论区再回答，还记得你们聊过什么。
 平时它按自己的作息刷 B 站，逐条读字幕挑值得看的写进日报，刷到你会喜欢的就私信你。
 
-想要 QQ 私聊、饮食记录和逛别的网站，用完整版 [claude-companion](https://github.com/Jcxu97/claude-companion)。
+想要 QQ 私聊、饮食记录和逛别的网站，用完整版 [qq-bili-companion](https://github.com/Jcxu97/qq-bili-companion)。
 
 Claude Code · Codex · 任何支持 MCP 的 agent
 

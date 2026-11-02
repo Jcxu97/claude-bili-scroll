@@ -7,7 +7,7 @@
 The bot lives on your Bilibili bot account. Mention it under any video, or send it a video in a private message. It reads the subtitles, the danmaku and the comments, and then it answers. It remembers what you talked about.
 It also browses Bilibili on its own daily routine. It reads the subtitles of each video, writes the good ones into a daily report, and sends you videos that you will like.
 
-For QQ chat, a meal log and visits to other sites, use the full version [claude-companion](https://github.com/Jcxu97/claude-companion).
+For QQ chat, a meal log and visits to other sites, use the full version [qq-bili-companion](https://github.com/Jcxu97/qq-bili-companion).
 
 Claude Code · Codex · any agent that supports MCP
 
